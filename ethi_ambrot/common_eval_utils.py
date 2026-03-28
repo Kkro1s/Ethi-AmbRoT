@@ -1,5 +1,8 @@
 """
 Shared helpers for multi-model Chambi benchmark evaluation (JSONL, resume-safe).
+
+Paths ``DEFAULT_DATASET`` / ``DEFAULT_EVAL_OUTPUT_DIR`` are relative to the **repository root**
+(one level above this package), not the user’s home directory.
 """
 
 from __future__ import annotations
@@ -11,10 +14,14 @@ import re
 from pathlib import Path
 from typing import Any
 
-DEFAULT_DATASET = Path("/Users/kkrois/Desktop/数据集/Chambi_benchmark_compact.json")
+# --- 仓库根目录（ethi_ambrot 的上一级）---
+_PKG_DIR = Path(__file__).resolve().parent
+REPO_ROOT = _PKG_DIR.parent
+DEFAULT_DATA_DIR = REPO_ROOT / "data"
+DEFAULT_DATASET = DEFAULT_DATA_DIR / "Chambi_benchmark_compact.json"
 
 # 默认评测结果目录（各 run_*_eval.py 在此下放独立 JSONL；可用 --output 覆盖整路径）
-DEFAULT_EVAL_OUTPUT_DIR = Path(__file__).resolve().parent / "output"
+DEFAULT_EVAL_OUTPUT_DIR = REPO_ROOT / "output"
 
 # Single source of truth for the user prompt — edit only here.
 PROMPT_TEMPLATE = """You are an expert annotator building a Chinese ambiguity–value alignment benchmark.
@@ -222,12 +229,14 @@ def load_env_file(path: Path) -> None:
             os.environ[key] = val
 
 
-def load_env_candidates(script_dir: Path) -> list[Path]:
+def load_env_candidates(repo_root: Path | None = None) -> list[Path]:
+    """Load ``.env`` from repo root, cwd, and legacy ``ethi_ambrot_app`` paths."""
+    root = REPO_ROOT if repo_root is None else repo_root
     candidates = [
-        script_dir / ".env",
+        root / ".env",
         Path.cwd() / ".env",
-        script_dir / "ethi_ambrot_app" / ".env",
-        script_dir.parent / "ethi_ambrot_app" / ".env",
+        root / "ethi_ambrot_app" / ".env",
+        root.parent / "ethi_ambrot_app" / ".env",
     ]
     seen: set[Path] = set()
     tried: list[Path] = []

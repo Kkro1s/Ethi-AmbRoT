@@ -32,7 +32,7 @@ Batch-evaluate **Chambi-style** Chinese ambiguity–value alignment benchmarks b
 
 ### Features
 
-- **Shared eval logic** in `common_eval_utils.py`: dataset I/O, prompt, `extract_json_object`, JSONL append, done-id set for resume.
+- **Shared eval logic** in package `ethi_ambrot` (`common_eval_utils.py`): dataset I/O, prompt, `extract_json_object`, JSONL append, done-id set for resume.
 - **One runner per provider**; default outputs go to separate files under `output/` (e.g. `output/qwen_predictions.jsonl`).
 - **No gold in the prompt**: only `input_text` + the shared template; `ambiguity_type` / `value_dimension` / `readings` stay in the dataset for offline evaluation.
 - **Robust JSON parsing**: strips \`\`\`json fences, tolerates leading/trailing chatter; falls back to the first `{` … last `}` slice before failing.
@@ -46,19 +46,26 @@ Batch-evaluate **Chambi-style** Chinese ambiguity–value alignment benchmarks b
 ```text
 .
 ├── README.md
+├── pyproject.toml                 # optional: pip install -e .
 ├── requirements.txt
-├── common_eval_utils.py
-├── run_qwen_eval.py
-├── run_doubao_eval.py
-├── run_gpt_eval.py
-├── run_glm_eval.py
-├── generate_rot_dataset.py       # optional: Chambi → compact benchmark helper
-├── Chambi_benchmark_compact.json
-└── output/
+├── ethi_ambrot/                   # importable package
+│   ├── __init__.py
+│   └── common_eval_utils.py
+├── scripts/                       # CLI entrypoints (recommended)
+│   ├── run_qwen_eval.py
+│   ├── run_doubao_eval.py
+│   ├── run_gpt_eval.py
+│   ├── run_glm_eval.py
+│   └── generate_rot_dataset.py
+├── run_*.py                       # thin wrappers → scripts/ (same as old commands)
+├── generate_rot_dataset.py        # wrapper → scripts/
+├── data/                          # benchmark JSON (and full Chambi exports)
+│   ├── Chambi_benchmark_compact.json
+│   ├── Chambi.json
+│   └── Chambi_rot_enhanced.json
+└── output/                        # default JSONL predictions (gitignored)
     ├── qwen_predictions.jsonl
-    ├── doubao_predictions.jsonl
-    ├── gpt_predictions.jsonl
-    └── glm_predictions.jsonl
+    └── …
 ```
 
 <a id="requirements-en"></a>
@@ -77,6 +84,8 @@ cd /path/to/your/repo
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+# optional: editable install so ``from ethi_ambrot...`` works without sys.path hacks
+# pip install -e .
 ```
 
 `python-dotenv` is **not** required; you may install it for convenience or rely on `export` / the simple `.env` loader in the scripts.
@@ -100,33 +109,34 @@ Optional timeouts: `QWEN_TIMEOUT`, `OPENAI_TIMEOUT`, `GLM_TIMEOUT`, `DOUBAO_TIME
 
 ### Usage
 
-Run from the directory that contains the scripts:
+Run from the **repository root** (recommended form uses `scripts/`; root `run_*.py` files forward to the same code):
 
 ```bash
 export QWEN_API_KEY="sk-..." QWEN_MODEL="qwen-max"
-python run_qwen_eval.py
+python scripts/run_qwen_eval.py
+# or: python run_qwen_eval.py
 
 export DOUBAO_API_KEY="..." DOUBAO_BASE_URL="https://..." DOUBAO_MODEL="..."
-python run_doubao_eval.py
+python scripts/run_doubao_eval.py
 
 export OPENAI_API_KEY="sk-..." OPENAI_MODEL="gpt-4o"
-python run_gpt_eval.py
+python scripts/run_gpt_eval.py
 
 export GLM_API_KEY="..." GLM_MODEL="glm-4"
-python run_glm_eval.py
+python scripts/run_glm_eval.py
 ```
 
 **Shared CLI**
 
 | Flag | Meaning |
 |------|---------|
-| `--dataset` | Path to benchmark JSON array (default: `common_eval_utils.DEFAULT_DATASET`) |
+| `--dataset` | Path to benchmark JSON array (default: `data/Chambi_benchmark_compact.json` via `ethi_ambrot.common_eval_utils.DEFAULT_DATASET`) |
 | `--output` | JSONL path (default: `output/<provider>_predictions.jsonl`) |
 | `--limit` | Max **new** items to process this run (skipped “done” ids do not count) |
 | `--sleep` | Seconds to sleep after each API call (default `0.4`) |
 
 ```bash
-python run_qwen_eval.py --dataset ./Chambi_benchmark_compact.json --limit 50 --sleep 0.5
+python scripts/run_qwen_eval.py --dataset ./data/Chambi_benchmark_compact.json --limit 50 --sleep 0.5
 ```
 
 <a id="output-format-en"></a>
@@ -166,14 +176,14 @@ Rows with `success: false` are **retried**. Using a different `--output` path st
 
 ### Customizing prompt & dataset path
 
-- **Prompt**: edit `PROMPT_TEMPLATE` in `common_eval_utils.py`; all four runners use `build_prompt()` (`{input_text}` substitution).
-- **Default dataset path**: `DEFAULT_DATASET` may point to an absolute path on the author’s machine — after cloning, switch to a **relative path** or pass `--dataset` every time.
+- **Prompt**: edit `PROMPT_TEMPLATE` in `ethi_ambrot/common_eval_utils.py`; all four runners use `build_prompt()` (`{input_text}` substitution).
+- **Default dataset path**: `DEFAULT_DATASET` is **`<repo>/data/Chambi_benchmark_compact.json`**; override with `--dataset` if you store files elsewhere.
 
 <a id="related-tooling-en"></a>
 
 ### Related tooling
 
-- **`generate_rot_dataset.py`**: optional pipeline from full Chambi-style inputs to compact benchmark JSON (independent of the batch inference runners).
+- **`scripts/generate_rot_dataset.py`** (wrapper at repo root): optional pipeline from full Chambi-style inputs to compact benchmark JSON. Example: `python scripts/generate_rot_dataset.py --input data/Chambi.json --output data/out.json`.
 
 <a id="license-en"></a>
 
@@ -207,7 +217,7 @@ Add a `LICENSE` file (e.g. MIT) before open-sourcing. For issues/PRs, include Py
 
 ### 功能
 
-- **统一评测逻辑**：`common_eval_utils.py` 负责读数据、Prompt、`extract_json_object`、JSONL 写入与已完样本集合。
+- **统一评测逻辑**：Python 包 `ethi_ambrot` 中 `common_eval_utils.py` 负责读数据、Prompt、`extract_json_object`、JSONL 写入与已完样本集合。
 - **一模型一脚本**：四套入口，默认分别写入 `output/` 下独立文件（如 `output/qwen_predictions.jsonl`）。
 - **不把 gold 发给模型**：仅 `input_text` + 统一模板；`ambiguity_type`、`value_dimension`、`readings` 只留在数据里供线下对比。
 - **健壮 JSON 解析**：支持 \`\`\`json 围栏与前后杂话；整块解析失败时再取首个 `{` 到最后一个 `}` 重试。
@@ -221,19 +231,24 @@ Add a `LICENSE` file (e.g. MIT) before open-sourcing. For issues/PRs, include Py
 ```text
 .
 ├── README.md
+├── pyproject.toml
 ├── requirements.txt
-├── common_eval_utils.py           # 共享逻辑
-├── run_qwen_eval.py               # 通义 Qwen（DashScope 兼容）
-├── run_doubao_eval.py             # 豆包 / 火山 Ark
-├── run_gpt_eval.py                # OpenAI 或兼容代理
-├── run_glm_eval.py                # 智谱 GLM
-├── generate_rot_dataset.py        # （可选）Chambi → 精简 benchmark
-├── Chambi_benchmark_compact.json  # 基准数据（JSON 数组）
-└── output/                        # 默认预测输出（自动创建）
-    ├── qwen_predictions.jsonl
-    ├── doubao_predictions.jsonl
-    ├── gpt_predictions.jsonl
-    └── glm_predictions.jsonl
+├── ethi_ambrot/                   # 可导入包：公共评测逻辑
+│   ├── __init__.py
+│   └── common_eval_utils.py
+├── scripts/                       # 推荐从此处运行 CLI
+│   ├── run_qwen_eval.py
+│   ├── run_doubao_eval.py
+│   ├── run_gpt_eval.py
+│   ├── run_glm_eval.py
+│   └── generate_rot_dataset.py
+├── run_*.py / generate_rot_dataset.py   # 根目录薄封装，转发到 scripts/
+├── data/                          # 数据 JSON
+│   ├── Chambi_benchmark_compact.json
+│   ├── Chambi.json
+│   └── Chambi_rot_enhanced.json
+└── output/                        # 默认 JSONL（.gitignore）
+    └── …
 ```
 
 <a id="环境要求"></a>
@@ -252,6 +267,7 @@ cd /path/to/数据集
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+# 可选：pip install -e .
 ```
 
 `python-dotenv` **非**必需；可自行安装，或依赖 shell `export` / 脚本内简易 `.env` 解析。
@@ -275,33 +291,34 @@ pip install -r requirements.txt
 
 ### 运行方式
 
-在脚本所在目录执行：
+在**仓库根目录**执行（推荐 `scripts/…`；根目录 `run_*.py` 为兼容旧习惯的转发）：
 
 ```bash
 export QWEN_API_KEY="sk-..." QWEN_MODEL="qwen-max"
-python run_qwen_eval.py
+python scripts/run_qwen_eval.py
+# 或: python run_qwen_eval.py
 
 export DOUBAO_API_KEY="..." DOUBAO_BASE_URL="https://..." DOUBAO_MODEL="..."
-python run_doubao_eval.py
+python scripts/run_doubao_eval.py
 
 export OPENAI_API_KEY="sk-..." OPENAI_MODEL="gpt-4o"
-python run_gpt_eval.py
+python scripts/run_gpt_eval.py
 
 export GLM_API_KEY="..." GLM_MODEL="glm-4"
-python run_glm_eval.py
+python scripts/run_glm_eval.py
 ```
 
 **命令行参数（四脚本一致）**
 
 | 参数 | 说明 |
 |------|------|
-| `--dataset` | 基准 JSON 路径（默认见 `DEFAULT_DATASET`） |
+| `--dataset` | 基准 JSON 路径（默认 `data/Chambi_benchmark_compact.json`） |
 | `--output` | JSONL 路径（默认 `output/*_predictions.jsonl`） |
 | `--limit` | 本轮**最多新处理**条数（已跳过的不计） |
 | `--sleep` | 每条请求后休眠秒数（默认 `0.4`） |
 
 ```bash
-python run_qwen_eval.py --dataset ./Chambi_benchmark_compact.json --limit 50 --sleep 0.5
+python scripts/run_qwen_eval.py --dataset ./data/Chambi_benchmark_compact.json --limit 50 --sleep 0.5
 ```
 
 <a id="输出格式"></a>
@@ -341,14 +358,14 @@ record.get("success") is True and record.get("parsed_response") is not None
 
 ### 自定义 Prompt 与数据路径
 
-- **Prompt**：修改 `common_eval_utils.py` 中的 `PROMPT_TEMPLATE`；`build_prompt()` 替换 `{input_text}`，四脚本共用。
-- **默认数据路径**：`DEFAULT_DATASET` 可能仍是本机绝对路径；**克隆仓库后**请改为相对路径或始终使用 `--dataset`。
+- **Prompt**：修改 `ethi_ambrot/common_eval_utils.py` 中的 `PROMPT_TEMPLATE`；`build_prompt()` 替换 `{input_text}`，四脚本共用。
+- **默认数据路径**：`DEFAULT_DATASET` 为 **`<仓库根>/data/Chambi_benchmark_compact.json`**；其他位置请用 `--dataset`。
 
 <a id="相关脚本"></a>
 
 ### 相关脚本
 
-- **`generate_rot_dataset.py`**：从完整 Chambi 工作流生成/维护精简 benchmark（与批量推理脚本解耦）。
+- **`scripts/generate_rot_dataset.py`**（根目录亦有同名转发脚本）：从完整 Chambi 工作流生成/维护精简 benchmark。示例：`python scripts/generate_rot_dataset.py --input data/Chambi.json --output data/out.json`。
 
 <a id="许可证"></a>
 
