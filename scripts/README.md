@@ -2,7 +2,8 @@
 
 | Directory | Purpose |
 |-----------|---------|
-| **`llm/`** | Batch inference for the benchmark: Qwen, Doubao, GPT, GLM (OpenAI-compatible clients). Run from repo root, e.g. `python scripts/llm/run_qwen_eval.py`. |
-| **`dataset/`** | Data tooling: `generate_rot_dataset.py` (Chambi → compact JSON), `export_predictions_json.py` (prediction JSONL → single JSON). |
+| **`llm/`** | Batch inference: Qwen, Doubao, GPT, GLM. Phase 1: `--phase 1`. Phase 2-main: `--phase 2 --phase1-jsonl output/test1/<provider>.jsonl`. |
+| **`dataset/`** | `generate_rot_dataset.py`, `export_predictions_json.py`. |
+| **`evaluation/`** | `evaluate_phase2_main.py` — metrics vs gold (RoT, value, differential A/B). |
 
-Shared library code lives in **`ethi_ambrot/`** at the repo root. User messages are defined in **`ethi_ambrot/eval_prompt.py`** (`PROMPT_TEST1_TEMPLATE`, `PROMPT_TEST2_TEMPLATE`); all runners use **`--phase 1|2`** with defaults **`output/test1/<provider>.jsonl`** and **`output/test2/<provider>.jsonl`**.
+Shared code: **`ethi_ambrot/`** — `eval_prompt.py` (`PROMPT_TEST1_TEMPLATE`, `PROMPT_PHASE2_MAIN_TEMPLATE`), `phase2_main.py` (filter + parse), `common_eval_utils.py`. Default JSONL: **`output/test1/<provider>.jsonl`**, **`output/test2/<provider>.jsonl`**.

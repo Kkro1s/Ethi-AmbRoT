@@ -33,7 +33,7 @@ Batch-evaluate **Chambi-style** Chinese ambiguity–value alignment benchmarks b
 ### Features
 
 - **Shared eval logic** in package `ethi_ambrot`: `eval_prompt.py` (test1 **and** test2 prompts), `common_eval_utils.py` (dataset I/O, phase-aware parsing, `extract_json_object` for legacy/exports, JSONL append, done-id set for resume).
-- **Two-phase evaluation** via `--phase 1` (linguistic ambiguity + readings only) or `--phase 2` (RoT/value reasoning given two paraphrases from the dataset). One runner per provider; defaults under **`output/test1/`** and **`output/test2/`** (e.g. `output/test1/qwen.jsonl`, `output/test2/qwen.jsonl`).
+- **Two-phase evaluation** via `--phase 1` (readings / 原句+解读) and `--phase 2` **Phase 2-main** (RoT + value alignment for **two readings taken from phase 1 JSONL**). Phase 2 requires `--phase1-jsonl`; only **dual-reading** phase-1 successes (distinct A/B) are evaluated. Defaults: **`output/test1/`** and **`output/test2/<provider>.jsonl`**.
 - **No gold in the model prompt**: test1 uses only `input_text`; test2 uses `input_text` + `readings[].paraphrase` (never `gold_rot` / `gold_value_alignment` in the message). Other gold stays in the JSON for offline scoring.
 - **Parsing**: test1 uses a Chinese layout parser (`parse_test1_response`); test2 stores a placeholder dict with `free_text` until the final output schema is fixed; `extract_json_object` remains for tooling that still consumes JSON.
 - **Durable writes**: each line is followed by `flush()` + `os.fsync()` for long batch jobs.
@@ -50,7 +50,8 @@ Batch-evaluate **Chambi-style** Chinese ambiguity–value alignment benchmarks b
 ├── requirements.txt
 ├── ethi_ambrot/                   # importable package
 │   ├── __init__.py
-│   ├── eval_prompt.py             # PROMPT_TEST1 / PROMPT_TEST2 + builders (all LLM runners)
+│   ├── eval_prompt.py             # PROMPT_TEST1 / PROMPT_PHASE2_MAIN + builders
+│   ├── phase2_main.py             # Phase 2-main filter + parse + dimensions
 │   └── common_eval_utils.py
 ├── scripts/
 │   ├── llm/                       # multi-model benchmark inference (OpenAI-compatible)
@@ -58,9 +59,11 @@ Batch-evaluate **Chambi-style** Chinese ambiguity–value alignment benchmarks b
 │   │   ├── run_doubao_eval.py
 │   │   ├── run_gpt_eval.py
 │   │   └── run_glm_eval.py
-│   └── dataset/                   # Chambi → compact JSON, JSONL → JSON export
-│       ├── generate_rot_dataset.py
-│       └── export_predictions_json.py
+│   ├── dataset/                   # Chambi → compact JSON, JSONL → JSON export
+│   │   ├── generate_rot_dataset.py
+│   │   └── export_predictions_json.py
+│   └── evaluation/                # offline metrics vs gold
+│       └── evaluate_phase2_main.py
 ├── data/                          # benchmark JSON (and full Chambi exports)
 │   ├── Chambi_benchmark_compact.json
 │   ├── Chambi.json
@@ -135,7 +138,8 @@ python scripts/llm/run_glm_eval.py
 | Flag | Meaning |
 |------|---------|
 | `--dataset` | Path to benchmark JSON array (default: `data/Chambi_benchmark_compact.json` via `ethi_ambrot.common_eval_utils.DEFAULT_DATASET`) |
-| `--phase` | `1` = ambiguity + readings; `2` = RoT/value given two paraphrases (placeholder template). |
+| `--phase` | `1` = phase1；`2` = Phase 2-main（须同时提供 `--phase1-jsonl`）。 |
+| `--phase1-jsonl` | Phase1 的 JSONL；**`--phase 2` 时必填**。 |
 | `--output` | JSONL path (default: `output/test<phase>/<provider>.jsonl`) |
 | `--limit` | Max **new** items to process this run (skipped “done” ids do not count) |
 | `--sleep` | Seconds to sleep after each API call (default `0.4`) |
@@ -164,7 +168,7 @@ One JSON object per line (UTF-8):
 ```
 
 - `eval_phase`: `1` or `2`; resume only matches lines with the same phase and output file.
-- `parsed_response`: structured dict on success (test1: `original_sentence`, `reading_a`, optional `reading_b`, or legacy `has_ambiguity` layout; test2: `phase2_placeholder`, `free_text`); `null` on failure.
+- `parsed_response`: phase1 fields as above; phase2 **Phase 2-main**: nested `reading_a` / `reading_b` (RoT + dimensions). Legacy rows may still have `phase2_placeholder` + `free_text`. `null` on failure.
 - `success`: `true` only if the API call and phase-specific parsing succeeded; otherwise `false` and `error` carries a message.
 
 <a id="resume-semantics-en"></a>
@@ -190,7 +194,7 @@ Rows with `success: false` are **retried**. Using a different `--output` path or
 
 ### Related tooling
 
-- **`scripts/dataset/generate_rot_dataset.py`**: Chambi → compact benchmark JSON. **`scripts/dataset/export_predictions_json.py`**: merge prediction JSONL into one JSON file. Examples: `python scripts/dataset/generate_rot_dataset.py --input data/Chambi.json --output data/out.json`; `python scripts/dataset/export_predictions_json.py -i output/test1/glm.jsonl`.
+- **`scripts/dataset/generate_rot_dataset.py`**: Chambi → compact benchmark JSON. **`scripts/dataset/export_predictions_json.py`**: merge prediction JSONL into one JSON file. **`scripts/evaluation/evaluate_phase2_main.py`**: score Phase 2-main JSONL vs dataset gold (RoT, value, differential metrics). Examples: `python scripts/llm/run_glm_eval.py --phase 2 --phase1-jsonl output/test1/glm.jsonl`; `python scripts/evaluation/evaluate_phase2_main.py -p output/test2/glm.jsonl -d data/Chambi_benchmark_compact.json -o output/eval_reports/glm_p2.json`.
 
 <a id="license-en"></a>
 
@@ -225,9 +229,9 @@ Add a `LICENSE` file (e.g. MIT) before open-sourcing. For issues/PRs, include Py
 ### 功能
 
 - **统一评测逻辑**：`ethi_ambrot/eval_prompt.py` 提供测试1 / 测试2 文案；`common_eval_utils.py` 负责读数据、按 `--phase` 构造 user 内容、解析、JSONL 与续跑（含 `extract_json_object` 供导出等场景）。
-- **两阶段参数**：`--phase 1` 测歧义与解读；`--phase 2` 在数据集中两条 paraphrase 上做 RoT/价值（测试2 模板仍为占位）。默认分别写入 `output/test1/<厂商>.jsonl` 与 `output/test2/<厂商>.jsonl`。
-- **不把 gold 写进模型输入**：测试1 仅 `input_text`；测试2 仅原句 + `readings[].paraphrase`；`gold_rot` 等仅供线下对比。
-- **解析**：测试1 按中文版式解析为结构化字段；测试2 当前以 `free_text` 落盘；历史 JSON 推断逻辑仍在导出校验中保留。
+- **两阶段参数**：`--phase 1` 为解读任务；`--phase 2` 为 **Phase 2-main**，须指定 `--phase1-jsonl`，仅对 phase1 中**有效双解读**样本跑 RoT/价值分析；`input_text` 以数据集中为准。默认 `output/test1/`、`output/test2/`。
+- **不把 gold 写进模型输入**：phase2 仅 `input_text` + phase1 的 `reading_a` / `reading_b`；`gold_rot` 等只在 `evaluate_phase2_main.py` 中对比。
+- **解析**：phase1 中文版式；phase2 为 `【解读A/B】` 下六字「社会规范…理由」半结构化解析为嵌套字段。
 - **可靠落盘**：每条写入后 `flush()` + `os.fsync()`，适合长时间批量任务。
 - **环境变量驱动**：密钥、Base URL、模型名从环境读取；可选用项目根 `.env`（不覆盖已有 `export`）。
 
@@ -242,17 +246,20 @@ Add a `LICENSE` file (e.g. MIT) before open-sourcing. For issues/PRs, include Py
 ├── requirements.txt
 ├── ethi_ambrot/                   # 可导入包：公共评测逻辑
 │   ├── __init__.py
-│   ├── eval_prompt.py             # 全模型共用 PROMPT_TEST1 / PROMPT_TEST2
+│   ├── eval_prompt.py             # PROMPT_TEST1 / PROMPT_PHASE2_MAIN
+│   ├── phase2_main.py
 │   └── common_eval_utils.py
 ├── scripts/
-│   ├── llm/                       # 各模型评测入口
+│   ├── llm/
 │   │   ├── run_qwen_eval.py
 │   │   ├── run_doubao_eval.py
 │   │   ├── run_gpt_eval.py
 │   │   └── run_glm_eval.py
-│   └── dataset/                   # 数据生成与导出
-│       ├── generate_rot_dataset.py
-│       └── export_predictions_json.py
+│   ├── dataset/
+│   │   ├── generate_rot_dataset.py
+│   │   └── export_predictions_json.py
+│   └── evaluation/
+│       └── evaluate_phase2_main.py
 ├── data/                          # 数据 JSON
 │   ├── Chambi_benchmark_compact.json
 │   ├── Chambi.json
@@ -324,7 +331,8 @@ python scripts/llm/run_glm_eval.py
 | 参数 | 说明 |
 |------|------|
 | `--dataset` | 基准 JSON 路径（默认 `data/Chambi_benchmark_compact.json`） |
-| `--phase` | `1`：歧义与解读；`2`：给定解读下的规范/价值分析（占位模板）。 |
+| `--phase` | `1`：phase1；`2`：Phase 2-main（须 `--phase1-jsonl`）。 |
+| `--phase1-jsonl` | **`--phase 2` 必填**，phase1 输出 JSONL。 |
 | `--output` | JSONL 路径（默认 `output/test<phase>/<厂商>.jsonl`） |
 | `--limit` | 本轮**最多新处理**条数（已跳过的不计） |
 | `--sleep` | 每条请求后休眠秒数（默认 `0.4`） |
@@ -353,7 +361,7 @@ python scripts/llm/run_qwen_eval.py --dataset ./data/Chambi_benchmark_compact.js
 ```
 
 - **`eval_phase`**：本条记录所属阶段；续跑时与同文件内同 `eval_phase` 的成功样本合并判断。
-- **`parsed_response`**：解析成功为对象（测试1：`original_sentence` / `reading_a` / `reading_b`，或旧版 `has_ambiguity` 版面）；失败为 `null`。
+- **`parsed_response`**：phase1 见 `original_sentence` / 解读字段；phase2 为嵌套 `reading_a` / `reading_b`（各含 RoT 与价值维度字段）；失败为 `null`。
 - **`success`**：接口成功且本阶段解析成功为 `true`；否则 `false`，**`error`** 为说明字符串。
 
 <a id="续跑规则"></a>
@@ -380,7 +388,8 @@ record.get("success") is True and record.get("parsed_response") is not None
 ### 相关脚本
 
 - **`scripts/dataset/generate_rot_dataset.py`**：Chambi → 精简 benchmark。
-- **`scripts/dataset/export_predictions_json.py`**：评测 JSONL 合并为单个 JSON；示例见脚本顶部 docstring。
+- **`scripts/dataset/export_predictions_json.py`**：评测 JSONL 合并为单个 JSON。
+- **`scripts/evaluation/evaluate_phase2_main.py`**：Phase 2-main 与 gold 的离线指标（RoT、价值、A/B 区分度）。
 
 <a id="许可证"></a>
 

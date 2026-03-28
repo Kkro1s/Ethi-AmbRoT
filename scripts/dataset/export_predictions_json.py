@@ -10,7 +10,7 @@
 
 --mode full        每行一条完整记录（含 raw_response、error 等），按 source_chambi_id 排序
 --mode benchmark   仅 success 且含 parsed_response 的条，每条为 { **parsed_response, \"source_chambi_id\": ... , \"eval_phase\"? }，按 id 排序
-                   （phase1：原句子/解读A/解读B 或旧版 has_ambiguity 版面；phase2：phase2_placeholder + free_text；历史 JSON 仍为 ambiguity_judgment / ambiguity_type）
+                   （phase1 字段；phase2-main：嵌套 reading_a/b；旧 phase2 可能为 phase2_placeholder；历史 ambiguity_judgment / ambiguity_type）
 
 可同时 --validate：自动识别 test1 / test2 占位 / new（ambiguity_judgment）/ legacy（ambiguity_type）并做粗粒度校验。
 
@@ -244,7 +244,31 @@ def validate_multi_ambiguity_item(obj: dict[str, Any], idx: int) -> list[str]:
     return errs
 
 
+def validate_phase2_main_item(obj: dict[str, Any], idx: int) -> list[str]:
+    errs: list[str] = []
+    req = (
+        "norm_activation",
+        "ethical_obligation",
+        "prescriptive_advice",
+        "primary_dimension",
+        "secondary_dimension",
+        "value_reason",
+    )
+    for side in ("reading_a", "reading_b"):
+        block = obj.get(side)
+        if not isinstance(block, dict):
+            errs.append(f"[{idx}] phase2_main.{side} not object")
+            continue
+        for k in req:
+            if k not in block or not isinstance(block[k], str):
+                errs.append(f"[{idx}] phase2_main.{side}.{k} must be string")
+    return errs
+
+
 def validate_item_auto(obj: dict[str, Any], idx: int) -> list[str]:
+    if isinstance(obj.get("reading_a"), dict) and "norm_activation" in obj["reading_a"]:
+        if isinstance(obj.get("reading_b"), dict) and "norm_activation" in obj["reading_b"]:
+            return validate_phase2_main_item(obj, idx)
     if obj.get("phase2_placeholder") is True:
         return validate_test2_placeholder_item(obj, idx)
     if "has_ambiguity" in obj:
@@ -256,7 +280,7 @@ def validate_item_auto(obj: dict[str, Any], idx: int) -> list[str]:
     if isinstance(obj.get("ambiguity_type"), dict):
         return validate_benchmark_item(obj, idx)
     return [
-        f"[{idx}] unknown schema: expected test1 (original_sentence / has_ambiguity legacy), phase2_placeholder, ambiguity_judgment, or ambiguity_type"
+        f"[{idx}] unknown schema: expected phase2_main, test1, phase2_placeholder, ambiguity_judgment, or ambiguity_type"
     ]
 
 

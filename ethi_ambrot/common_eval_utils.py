@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ethi_ambrot.eval_prompt import build_prompt_test1, build_prompt_test2
+from ethi_ambrot.eval_prompt import build_prompt_phase2_main, build_prompt_test1, build_prompt_test2
 
 
 def extract_reading_paraphrases(item: dict[str, Any]) -> tuple[str, str] | None:
@@ -127,7 +127,7 @@ def build_user_content_for_phase(
     if pair is None:
         return None, "missing_readings_paraphrases"
     ra, rb = pair
-    return build_prompt_test2(input_text, ra, rb), None
+    return build_prompt_phase2_main(input_text, ra, rb), None
 
 
 def parse_response_for_phase(phase: int, raw: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -140,13 +140,12 @@ def parse_response_for_phase(phase: int, raw: str) -> tuple[dict[str, Any] | Non
         if p is None:
             return None, "test1_parse_failed"
         return p, None
-    text = (raw or "").strip()
-    if not text:
-        return None, "empty_response"
-    return (
-        {"phase2_placeholder": True, "free_text": text},
-        None,
-    )
+    from ethi_ambrot.phase2_main import parse_phase2_main_response
+
+    p2 = parse_phase2_main_response(raw)
+    if p2 is None:
+        return None, "phase2_parse_failed"
+    return p2, None
 
 # --- 仓库根目录（ethi_ambrot 的上一级）---
 _PKG_DIR = Path(__file__).resolve().parent
@@ -230,6 +229,27 @@ def load_dataset(path: Path) -> list[dict[str, Any]]:
     return out
 
 
+def phase2_cli_error(phase: int, phase1_jsonl: Path | None) -> str | None:
+    """``--phase 2`` 须提供已存在的 ``--phase1-jsonl``；否则返回英文错误信息。"""
+    if phase != 2:
+        return None
+    if phase1_jsonl is None:
+        return "error: --phase 2 requires --phase1-jsonl"
+    if not phase1_jsonl.is_file():
+        return f"not a file: {phase1_jsonl}"
+    return None
+
+
+def dataset_by_chambi_id(items: list[dict[str, Any]]) -> dict[Any, dict[str, Any]]:
+    """``source_chambi_id`` → 整行 benchmark 对象（权威 ``input_text`` / gold）。"""
+    out: dict[Any, dict[str, Any]] = {}
+    for row in items:
+        sid = row.get("source_chambi_id")
+        if sid is not None:
+            out[sid] = row
+    return out
+
+
 def load_done_ids(jsonl_path: Path, eval_phase: int | None = None) -> set[Any]:
     """
     Only ids with success is True and a non-None parsed_response are skipped (safe resume).
@@ -309,6 +329,34 @@ def parse_model_record(
     }
 
 
+def build_phase2_main_record(
+    source_chambi_id: Any,
+    input_text: str,
+    model_name: str,
+    raw_response: str,
+    parsed_response: dict[str, Any] | None,
+    success: bool,
+    error: str | None,
+    *,
+    reading_a: str,
+    reading_b: str,
+) -> dict[str, Any]:
+    """Phase 2-main JSONL 行：含 input_mode 与写入模型时的两条解读。"""
+    return {
+        "source_chambi_id": source_chambi_id,
+        "input_text": input_text,
+        "model_name": model_name,
+        "raw_response": raw_response,
+        "parsed_response": parsed_response,
+        "success": success,
+        "error": error,
+        "eval_phase": 2,
+        "input_mode": "two_readings",
+        "reading_a": reading_a,
+        "reading_b": reading_b,
+    }
+
+
 def configure_shared_eval_args(
     parser: argparse.ArgumentParser,
     *,
@@ -331,7 +379,13 @@ def configure_shared_eval_args(
         type=int,
         choices=(1, 2),
         default=1,
-        help="1=歧义与解读；2=给定解读下的 RoT/价值（占位模板）",
+        help="1=phase1；2=Phase 2-main（须配合 --phase1-jsonl）",
+    )
+    parser.add_argument(
+        "--phase1-jsonl",
+        type=Path,
+        default=None,
+        help="phase1 输出 JSONL；--phase 2 时必填，用于双解读过滤与 reading 来源",
     )
     parser.add_argument("--limit", type=int, default=None, help="Max new items to process (after resume skip)")
     parser.add_argument("--sleep", type=float, default=0.4, help="Seconds to sleep after each API call")

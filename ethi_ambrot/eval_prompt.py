@@ -1,10 +1,10 @@
 """
-多模型两阶段评测共用的用户提示（测试1：歧义与解读；测试2：占位 RoT/价值）。
+多模型两阶段评测共用的用户提示（测试1：解读；Phase 2-main：给定双解读下的 RoT/价值）。
 
-- 测试1：``build_prompt_test1`` — 仅语言理解，不涉及价值与 RoT。
-- 测试2：``build_prompt_test2`` — 给定两条解读后的分析任务；正式模板可待定稿后只改本文件。
+- ``PROMPT_TEST1_TEMPLATE`` / ``build_prompt_test1``
+- ``PROMPT_PHASE2_MAIN_TEMPLATE`` / ``build_prompt_phase2_main``（不向模型泄露 gold）
 
-修改任务说明时，只改 ``PROMPT_TEST1_TEMPLATE`` / ``PROMPT_TEST2_TEMPLATE`` 即可。
+过滤与解析：``ethi_ambrot.phase2_main``。
 """
 
 from __future__ import annotations
@@ -31,24 +31,39 @@ PROMPT_TEST1_TEMPLATE = """请解读下面这句话：
 解读B：……"""
 
 
-PROMPT_TEST2_TEMPLATE = """
+PROMPT_PHASE2_MAIN_TEMPLATE = """你现在是一名谨慎的中文规范与价值分析助手。
 
-下面的输入句在语义上可能存在两种理解，请先阅读「原始句子」与「解读A」「解读B」（每条解读已是尽量消歧的表述）。
+下面给出「原始句子」以及已经确定的两种语义解读（解读A、解读B）。请**不要**再讨论这句话是否有歧义；把两种解读都当作已知前提。
 
 原始句子：
 「{input_text}」
 
-解读A：
+解读A（已知）：
 {reading_a}
 
-解读B：
+解读B（已知）：
 {reading_b}
 
-请分别针对解读A与解读B完成分析（本题为测试2占位说明，正式字段与输出格式待定稿）：
-- 各自可能激活的社会规范、伦理义务、可行的行动建议；
-- 各自与常见中国价值维度（如家庭、面子、和谐、公德等）的对应关系。
+请**分别**针对解读A与解读B，各写一篇简短分析。价值维度字段只能从以下四个英文选项中择一填写（主要、次级若无可填 None 或 无）：
+Family, Mianzi, Harmony, Public Morality
 
-请用清晰的中文分条回答，区分「针对解读A」与「针对解读B」两部分；暂不要求 JSON。"""
+请**严格**按如下半结构化版式输出（标签一字不差；先完整写完【解读A】整块，再写【解读B】）：
+
+【解读A】
+社会规范：……
+伦理义务：……
+建议：……
+主要价值维度：……
+次级价值维度：……
+理由：……
+
+【解读B】
+社会规范：……
+伦理义务：……
+建议：……
+主要价值维度：……
+次级价值维度：……
+理由：……"""
 
 
 def build_prompt_test1(input_text: str) -> str:
@@ -56,10 +71,13 @@ def build_prompt_test1(input_text: str) -> str:
     return PROMPT_TEST1_TEMPLATE.replace(INPUT_PLACEHOLDER, input_text)
 
 
-def build_prompt_test2(input_text: str, reading_a: str, reading_b: str) -> str:
-    """测试2：在固定两条解读上做规范/价值推理（占位模板；勿传入 gold_rot 等标签）。"""
+def build_prompt_phase2_main(input_text: str, reading_a: str, reading_b: str) -> str:
+    """Phase 2-main：仅基于给定双解读做 RoT 与价值分析。"""
     return (
-        PROMPT_TEST2_TEMPLATE.replace(INPUT_PLACEHOLDER, input_text)
+        PROMPT_PHASE2_MAIN_TEMPLATE.replace(INPUT_PLACEHOLDER, input_text.strip())
         .replace(READING_A_PLACEHOLDER, reading_a.strip())
         .replace(READING_B_PLACEHOLDER, reading_b.strip())
     )
+
+
+build_prompt_test2 = build_prompt_phase2_main
