@@ -177,19 +177,37 @@ def parse_phase2_main_response(raw: str) -> dict[str, Any] | None:
     pb = _parse_phase2_block(block_b)
     if pa is None or pb is None:
         return None
+
+    # 归一化 value dimensions
+    pa["primary_dimension"] = normalize_dimension(pa.get("primary_dimension", ""))
+    pa["secondary_dimension"] = normalize_dimension(pa.get("secondary_dimension", ""))
+
+    pb["primary_dimension"] = normalize_dimension(pb.get("primary_dimension", ""))
+    pb["secondary_dimension"] = normalize_dimension(pb.get("secondary_dimension", ""))
+
     return {"reading_a": pa, "reading_b": pb}
 
 
 def normalize_dimension(s: str) -> str | None:
     """将模型输出的维度字符串归一化到四选一；无法识别则返回 None。"""
     x = (s or "").strip()
-    if not x or x.lower() in ("none", "null", "无", "n/a"):
+    xl = x.lower()
+
+    # 统一把“无/None/空值/不明显”类表达归一化为 None
+    if not x or xl in {"none", "null", "n/a", "na"} or x in {"无", "不明显", "不适用", "暂无"}:
         return None
+
+    # 已经是标准英文标签
     if x in PHASE2_VALUE_DIMENSIONS:
         return x
+
+    # 大小写不一致时归一化
     for d in PHASE2_VALUE_DIMENSIONS:
-        if x.lower() == d.lower():
+        if xl == d.lower():
             return d
+
+    # 中文别名映射
     if x in DIMENSION_ALIASES_CN:
         return DIMENSION_ALIASES_CN[x]
+
     return None
