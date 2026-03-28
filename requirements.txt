@@ -1,0 +1,2 @@
+openai>=1.0.0
+# Optional: load dotenv in your shell or use export; scripts use .env via simple parser in common_eval_utils.
