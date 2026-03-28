@@ -20,7 +20,7 @@ build/
 .ruff_cache/
 
 # Local evaluation outputs (large / regenerable)
-output/*.jsonl
+output/**/*.jsonl
 
 # OS / editor
 .DS_Store

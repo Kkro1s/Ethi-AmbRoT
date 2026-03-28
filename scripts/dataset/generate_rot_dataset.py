@@ -14,8 +14,8 @@
   export QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
   export QWEN_MODEL=qwen-max
 
-  python scripts/generate_rot_dataset.py --input data/Chambi.json --output data/Chambi_benchmark.json
-  python scripts/generate_rot_dataset.py --input data/Chambi.json --output out.json --start 0 --end 100 --max-items 50
+  python scripts/dataset/generate_rot_dataset.py --input data/Chambi.json --output data/Chambi_benchmark.json
+  python scripts/dataset/generate_rot_dataset.py --input data/Chambi.json --output out.json --start 0 --end 100 --max-items 50
 
 环境变量可兼用 QWEN_MAX_* / DASHSCOPE_API_KEY。
 自动依次尝试加载 .env：仓库根目录、当前工作目录、仓库根/ethi_ambrot_app、上级/ethi_ambrot_app（不覆盖已 export 的变量）。
@@ -649,7 +649,7 @@ def main() -> int:
         print("请安装: pip install openai", file=sys.stderr)
         return 1
 
-    repo_root = Path(__file__).resolve().parent.parent
+    repo_root = Path(__file__).resolve().parents[2]
     env_tried = load_env_for_qwen(repo_root)
 
     ap = argparse.ArgumentParser(

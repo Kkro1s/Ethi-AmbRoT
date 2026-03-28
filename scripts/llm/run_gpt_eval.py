@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-    python scripts/run_gpt_eval.py [--dataset ...] [--output ...]
+    python scripts/llm/run_gpt_eval.py [--phase 1|2] [--dataset ...] [--output ...]
 
-默认：``output/gpt_predictions.jsonl``
+默认：``output/test1/gpt.jsonl`` / ``output/test2/gpt.jsonl``
 
 Env: OPENAI_API_KEY, OPENAI_BASE_URL (default https://api.openai.com/v1), OPENAI_MODEL.
 """
@@ -17,23 +17,23 @@ import sys
 import time
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from ethi_ambrot.common_eval_utils import (
-    DEFAULT_EVAL_OUTPUT_DIR,
-    build_prompt,
-    configure_shared_eval_args,
-    extract_json_object,
     append_jsonl,
+    build_user_content_for_phase,
+    configure_shared_eval_args,
+    default_eval_jsonl_path,
     load_dataset,
     load_done_ids,
     load_env_candidates,
     parse_model_record,
+    parse_response_for_phase,
 )
 
-DEFAULT_OUTPUT = DEFAULT_EVAL_OUTPUT_DIR / "gpt_predictions.jsonl"
+_PROVIDER = "gpt"
 
 
 def _openai_config() -> tuple[str, str, str, float]:
@@ -64,8 +64,10 @@ def main() -> int:
     load_env_candidates(REPO_ROOT)
 
     ap = argparse.ArgumentParser(description="Run OpenAI-compatible GPT on Chambi benchmark compact")
-    configure_shared_eval_args(ap, DEFAULT_OUTPUT)
+    configure_shared_eval_args(ap)
     args = ap.parse_args()
+    if args.output is None:
+        args.output = default_eval_jsonl_path(_PROVIDER, args.phase)
 
     api_key, base_url, model, timeout_sec = _openai_config()
     client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_sec)
@@ -76,7 +78,7 @@ def main() -> int:
         print(f"Dataset error: {e}", file=sys.stderr)
         return 1
 
-    done_ids = load_done_ids(args.output)
+    done_ids = load_done_ids(args.output, eval_phase=args.phase)
     model_name = model
     new_count = 0
     total = len(items)
@@ -92,7 +94,27 @@ def main() -> int:
         if sid in done_ids:
             continue
 
-        user_content = build_prompt(input_text)
+        user_content, prep_err = build_user_content_for_phase(args.phase, item, input_text)
+        if prep_err:
+            rec = parse_model_record(
+                sid,
+                input_text,
+                model_name,
+                "",
+                None,
+                False,
+                prep_err,
+                eval_phase=args.phase,
+            )
+            append_jsonl(args.output, rec)
+            new_count += 1
+            print(
+                f"[{new_count}] source_chambi_id={sid} phase={args.phase} success=False ({prep_err})",
+                flush=True,
+            )
+            time.sleep(max(0.0, args.sleep))
+            continue
+
         raw = ""
         parsed = None
         ok = False
@@ -104,17 +126,26 @@ def main() -> int:
                 temperature=0.2,
             )
             raw = (resp.choices[0].message.content or "").strip()
-            parsed = extract_json_object(raw)
-            ok = True
+            parsed, perr = parse_response_for_phase(args.phase, raw)
+            if perr:
+                err = perr
+                ok = False
+            else:
+                ok = True
         except Exception as e:
             err = f"{type(e).__name__}: {e}"
 
-        rec = parse_model_record(sid, input_text, model_name, raw, parsed, ok, err)
+        rec = parse_model_record(
+            sid, input_text, model_name, raw, parsed, ok, err, eval_phase=args.phase
+        )
         append_jsonl(args.output, rec)
         if ok:
             done_ids.add(sid)
         new_count += 1
-        print(f"[{new_count}] source_chambi_id={sid} success={ok} (dataset size {total})", flush=True)
+        print(
+            f"[{new_count}] source_chambi_id={sid} phase={args.phase} success={ok} (dataset size {total})",
+            flush=True,
+        )
         time.sleep(max(0.0, args.sleep))
 
     return 0
