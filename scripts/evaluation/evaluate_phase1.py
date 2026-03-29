@@ -114,6 +114,20 @@ def normalize_text(s: str | None) -> str:
     return t
 
 
+def normalize_for_distinctness(s: str | None) -> str:
+    """
+    判断两条解读是否“实质为同一句”时用：保留全部标点，避免因去标点把不同解读合并。
+    NFKC + 首尾 strip + 空白压成单空格 + 小写。
+    """
+    if s is None:
+        return ""
+    t = unicodedata.normalize("NFKC", str(s)).strip()
+    if not t:
+        return ""
+    t = re.sub(r"\s+", " ", t)
+    return t.lower()
+
+
 def text_similarity(a: str | None, b: str | None) -> float:
     na, nb = normalize_text(a), normalize_text(b)
     if not na and not nb:
@@ -187,7 +201,7 @@ def has_two_valid_readings(pred_row: dict[str, Any] | None) -> bool:
         return False
     if not is_valid_reading(b):
         return False
-    if normalize_text(a) == normalize_text(b):
+    if normalize_for_distinctness(a) == normalize_for_distinctness(b):
         return False
     return True
 
@@ -205,7 +219,7 @@ def effective_predicted_reading_count(pred_row: dict[str, Any] | None) -> int:
         return 0
     if not is_valid_reading(sb):
         return 1
-    if normalize_text(sa) == normalize_text(sb):
+    if normalize_for_distinctness(sa) == normalize_for_distinctness(sb):
         return 1
     return 2
 

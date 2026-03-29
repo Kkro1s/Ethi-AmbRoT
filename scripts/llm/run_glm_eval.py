@@ -46,6 +46,7 @@ from ethi_ambrot.common_eval_utils import (
     append_jsonl,
     build_phase2_main_record,
     build_user_content_for_phase,
+    clear_jsonl_for_full_rerun,
     configure_shared_eval_args,
     dataset_by_chambi_id,
     default_eval_jsonl_path,
@@ -228,6 +229,8 @@ def main() -> int:
 
     if args.output is None:
         args.output = default_eval_jsonl_path(_PROVIDER, args.phase)
+
+    clear_jsonl_for_full_rerun(args.output, no_resume=args.no_resume)
 
     raw_interval = (os.environ.get("GLM_MIN_REQUEST_INTERVAL") or "").strip()
     if raw_interval:

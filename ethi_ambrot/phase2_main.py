@@ -62,6 +62,48 @@ def is_reading_b_placeholder(s: str) -> bool:
     )
 
 
+_PHASE2_PRED_SIDE_KEYS = frozenset(
+    {
+        "norm_activation",
+        "ethical_obligation",
+        "prescriptive_advice",
+        "primary_dimension",
+        "secondary_dimension",
+        "value_reason",
+    }
+)
+
+
+def is_valid_phase2_eval_row(record: dict[str, Any]) -> bool:
+    """
+    Phase 2 JSONL 行是否满足 judge 测评门槛：双解读、解析成功、嵌套 parsed_response 含两侧六字段。
+    """
+    ep = record.get("eval_phase")
+    if ep is not None and ep != 2:
+        return False
+    if record.get("success") is not True:
+        return False
+    ra = record.get("reading_a")
+    rb = record.get("reading_b")
+    if not isinstance(ra, str) or not ra.strip():
+        return False
+    if not isinstance(rb, str) or is_reading_b_placeholder(rb):
+        return False
+    if normalize_for_comparison(ra) == normalize_for_comparison(rb):
+        return False
+    pr = record.get("parsed_response")
+    if not isinstance(pr, dict):
+        return False
+    pa, pb = pr.get("reading_a"), pr.get("reading_b")
+    if not isinstance(pa, dict) or not isinstance(pb, dict):
+        return False
+    if not _PHASE2_PRED_SIDE_KEYS.issubset(pa.keys()):
+        return False
+    if not _PHASE2_PRED_SIDE_KEYS.issubset(pb.keys()):
+        return False
+    return True
+
+
 def is_valid_two_reading_item(record: dict[str, Any]) -> bool:
     """phase1 记录是否为 Phase 2-main 可用的双解读样本。"""
     if record.get("success") is not True:

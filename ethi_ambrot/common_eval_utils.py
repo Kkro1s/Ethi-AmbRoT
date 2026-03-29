@@ -389,6 +389,23 @@ def configure_shared_eval_args(
     )
     parser.add_argument("--limit", type=int, default=None, help="Max new items to process (after resume skip)")
     parser.add_argument("--sleep", type=float, default=0.4, help="Seconds to sleep after each API call")
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Delete existing --output JSONL then run from scratch (full phase-1/2 retest; not eval)",
+    )
+
+
+def clear_jsonl_for_full_rerun(path: Path, *, no_resume: bool) -> None:
+    """When ``no_resume`` is set, remove ``path`` so ``load_done_ids`` sees no progress."""
+    if not no_resume:
+        return
+    try:
+        if path.is_file():
+            path.unlink()
+            print(f"--no-resume: deleted {path}", file=sys.stderr)
+    except OSError as e:
+        print(f"--no-resume: could not delete {path}: {e}", file=sys.stderr)
 
 
 def load_env_file(path: Path) -> None:
