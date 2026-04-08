@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ethi-ambrot"
 version = "0.1.0"
-description = "Chambi multi-model benchmark evaluation (Ethi-AmbRoT)"
+description = "Ethi-AmbRoT multi-model benchmark evaluation"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["openai>=1.0.0"]

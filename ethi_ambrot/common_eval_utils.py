@@ -1,5 +1,5 @@
 """
-Shared helpers for multi-model Chambi benchmark evaluation (JSONL, resume-safe).
+Shared helpers for multi-model Ethi-AmbRoT benchmark evaluation (JSONL, resume-safe).
 
 Paths ``DEFAULT_DATASET`` / ``DEFAULT_EVAL_OUTPUT_DIR`` are relative to the **repository root**
 (one level above this package), not the user’s home directory.
@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -151,7 +152,7 @@ def parse_response_for_phase(phase: int, raw: str) -> tuple[dict[str, Any] | Non
 _PKG_DIR = Path(__file__).resolve().parent
 REPO_ROOT = _PKG_DIR.parent
 DEFAULT_DATA_DIR = REPO_ROOT / "data"
-DEFAULT_DATASET = DEFAULT_DATA_DIR / "Chambi_benchmark_compact.json"
+DEFAULT_DATASET = DEFAULT_DATA_DIR / "ethi_ambrot_benchmark_compact.json"
 
 # 默认评测结果目录（各 run_*_eval.py 在此下放独立 JSONL；可用 --output 覆盖整路径）
 DEFAULT_EVAL_OUTPUT_DIR = REPO_ROOT / "output"
@@ -167,6 +168,42 @@ def default_eval_jsonl_path(provider_slug: str, phase: int) -> Path:
     if phase not in (1, 2):
         raise ValueError(f"phase must be 1 or 2, got {phase}")
     return DEFAULT_EVAL_OUTPUT_DIR / f"test{phase}" / f"{provider_slug}.jsonl"
+
+
+def sanitize_eval_output_stem(model_name: str) -> str:
+    """将 API model 名转为安全的 jsonl 文件名主干（保留大小写、点、连字符）。"""
+    s = unicodedata.normalize("NFKC", (model_name or "").strip())
+    if not s:
+        return "model"
+    s = re.sub(r'[\s\\/:*?"<>|]+', "_", s)
+    s = re.sub(r"_+", "_", s).strip("._-")
+    return s or "model"
+
+
+def default_glm_eval_jsonl_path(phase: int, model_name: str) -> Path:
+    """
+    GLM 默认输出：``output/test{phase}/{model}.jsonl``，不同 ``GLM_MODEL`` 自动分开文件。
+
+    例：``glm-4-air`` → ``output/test1/glm-4-air.jsonl``；``--no-resume`` 时再生成 ``glm-4-air_1.jsonl``…
+    """
+    if phase not in (1, 2):
+        raise ValueError(f"phase must be 1 or 2, got {phase}")
+    stem = sanitize_eval_output_stem(model_name)
+    return DEFAULT_EVAL_OUTPUT_DIR / f"test{phase}" / f"{stem}.jsonl"
+
+
+def default_eval_jsonl_path_for_provider_model(phase: int, provider_slug: str, model_name: str) -> Path:
+    """
+    Qwen / GPT / Doubao 等：默认 ``output/test{phase}/{provider}_{model}.jsonl``（经 sanitize）。
+
+    例：``qwen`` + ``qwen-max`` → ``qwen_qwen-max.jsonl``；换模型即新文件，避免误续跑。
+    """
+    if phase not in (1, 2):
+        raise ValueError(f"phase must be 1 or 2, got {phase}")
+    left = sanitize_eval_output_stem(provider_slug)
+    right = sanitize_eval_output_stem(model_name)
+    stem = f"{left}_{right}"
+    return DEFAULT_EVAL_OUTPUT_DIR / f"test{phase}" / f"{stem}.jsonl"
 
 
 _FENCE_BLOCK = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
@@ -240,11 +277,11 @@ def phase2_cli_error(phase: int, phase1_jsonl: Path | None) -> str | None:
     return None
 
 
-def dataset_by_chambi_id(items: list[dict[str, Any]]) -> dict[Any, dict[str, Any]]:
-    """``source_chambi_id`` → 整行 benchmark 对象（权威 ``input_text`` / gold）。"""
+def dataset_by_ethi_ambrot_id(items: list[dict[str, Any]]) -> dict[Any, dict[str, Any]]:
+    """``source_ethi_ambrot_id`` → 整行 benchmark 对象（权威 ``input_text`` / gold）。"""
     out: dict[Any, dict[str, Any]] = {}
     for row in items:
-        sid = row.get("source_chambi_id")
+        sid = row.get("source_ethi_ambrot_id")
         if sid is not None:
             out[sid] = row
     return out
@@ -281,7 +318,7 @@ def load_done_ids(jsonl_path: Path, eval_phase: int | None = None) -> set[Any]:
                         continue
                 elif rp != eval_phase:
                     continue
-            sid = record.get("source_chambi_id")
+            sid = record.get("source_ethi_ambrot_id")
             if sid is not None:
                 done.add(sid)
     return done
@@ -296,18 +333,18 @@ def append_jsonl(path: Path, record: dict[str, Any]) -> None:
         os.fsync(f.fileno())
 
 
-def strip_chambi_meta(item: dict[str, Any]) -> dict[str, Any]:
+def strip_ethi_ambrot_meta(item: dict[str, Any]) -> dict[str, Any]:
     """Fields used for eval only (no gold fields passed to the model)."""
-    if "source_chambi_id" not in item or "input_text" not in item:
-        raise KeyError("item must contain source_chambi_id and input_text")
+    if "source_ethi_ambrot_id" not in item or "input_text" not in item:
+        raise KeyError("item must contain source_ethi_ambrot_id and input_text")
     return {
-        "source_chambi_id": item["source_chambi_id"],
+        "source_ethi_ambrot_id": item["source_ethi_ambrot_id"],
         "input_text": item["input_text"],
     }
 
 
 def parse_model_record(
-    source_chambi_id: Any,
+    source_ethi_ambrot_id: Any,
     input_text: str,
     model_name: str,
     raw_response: str,
@@ -318,7 +355,7 @@ def parse_model_record(
     eval_phase: int = 1,
 ) -> dict[str, Any]:
     return {
-        "source_chambi_id": source_chambi_id,
+        "source_ethi_ambrot_id": source_ethi_ambrot_id,
         "input_text": input_text,
         "model_name": model_name,
         "raw_response": raw_response,
@@ -330,7 +367,7 @@ def parse_model_record(
 
 
 def build_phase2_main_record(
-    source_chambi_id: Any,
+    source_ethi_ambrot_id: Any,
     input_text: str,
     model_name: str,
     raw_response: str,
@@ -343,7 +380,7 @@ def build_phase2_main_record(
 ) -> dict[str, Any]:
     """Phase 2-main JSONL 行：含 input_mode 与写入模型时的两条解读。"""
     return {
-        "source_chambi_id": source_chambi_id,
+        "source_ethi_ambrot_id": source_ethi_ambrot_id,
         "input_text": input_text,
         "model_name": model_name,
         "raw_response": raw_response,
@@ -366,7 +403,7 @@ def configure_shared_eval_args(
         "--dataset",
         type=Path,
         default=DEFAULT_DATASET,
-        help="Path to Chambi_benchmark_compact.json (JSON array)",
+        help="Path to ethi_ambrot_benchmark_compact.json (JSON array)",
     )
     parser.add_argument(
         "--output",
@@ -392,20 +429,45 @@ def configure_shared_eval_args(
     parser.add_argument(
         "--no-resume",
         action="store_true",
-        help="Delete existing --output JSONL then run from scratch (full phase-1/2 retest; not eval)",
+        help="不重写原 JSONL：在同级目录新建数字后缀文件 stem_1.jsonl、stem_2.jsonl… 并从头写入（phase 2 需相应更换 --phase1-jsonl）",
     )
 
 
-def clear_jsonl_for_full_rerun(path: Path, *, no_resume: bool) -> None:
-    """When ``no_resume`` is set, remove ``path`` so ``load_done_ids`` sees no progress."""
+def allocate_next_jsonl_path(preferred: Path) -> Path:
+    """
+    在 ``preferred`` 同级目录中，根据已有 ``stem.jsonl`` / ``stem_<n>.jsonl`` 取下一个编号路径。
+    尚无任一文件时返回 ``preferred``；已有 ``glm.jsonl`` 则新建 ``glm_1.jsonl``，以此类推。
+    """
+    parent = preferred.parent
+    stem = preferred.stem
+    suf = preferred.suffix
+    base_file = parent / f"{stem}{suf}"
+    max_n = -1
+    if base_file.is_file():
+        max_n = max(max_n, 0)
+    if parent.is_dir():
+        pat = re.compile(r"^" + re.escape(stem) + r"_(\d+)" + re.escape(suf) + r"$")
+        for p in parent.iterdir():
+            if not p.is_file():
+                continue
+            m = pat.match(p.name)
+            if m:
+                max_n = max(max_n, int(m.group(1)))
+    if max_n < 0:
+        return preferred
+    return parent / f"{stem}_{max_n + 1}{suf}"
+
+
+def resolve_jsonl_path_for_no_resume(path: Path, *, no_resume: bool) -> Path:
+    """``--no-resume`` 时使用新的编号 JSONL，不删除旧文件；否则仍写 ``path``。"""
     if not no_resume:
-        return
-    try:
-        if path.is_file():
-            path.unlink()
-            print(f"--no-resume: deleted {path}", file=sys.stderr)
-    except OSError as e:
-        print(f"--no-resume: could not delete {path}: {e}", file=sys.stderr)
+        return path
+    new_path = allocate_next_jsonl_path(path)
+    if new_path != path:
+        print(f"--no-resume: writing to {new_path} (previous files kept)", file=sys.stderr)
+    else:
+        print(f"--no-resume: writing to {new_path}", file=sys.stderr)
+    return new_path
 
 
 def load_env_file(path: Path) -> None:

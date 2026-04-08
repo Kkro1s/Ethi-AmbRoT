@@ -26,7 +26,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-_DEFAULT_GOLD = REPO_ROOT / "data" / "Chambi_benchmark_compact.json"
+_DEFAULT_GOLD = REPO_ROOT / "data" / "ethi_ambrot_benchmark_compact.json"
 _DEFAULT_PHASE1_EVAL_DIR = REPO_ROOT / "output" / "phase1_eval"
 
 # 与 parse_test1_response 中「无」处理对齐，并含常见占位
@@ -51,9 +51,9 @@ _PLACEHOLDER_RAW: frozenset[str] = frozenset(
 _EXTRA_PUNCT = "。，、；：？！「」『』【】《》〈〉…—·～・""''（）＂＇"
 
 
-def coerce_chambi_id(x: Any) -> int:
+def coerce_ethi_ambrot_id(x: Any) -> int:
     if isinstance(x, bool):
-        raise TypeError("source_chambi_id cannot be bool")
+        raise TypeError("source_ethi_ambrot_id cannot be bool")
     if isinstance(x, int):
         return x
     if isinstance(x, float) and x.is_integer():
@@ -71,10 +71,10 @@ def load_gold_dataset(path: Path) -> list[dict[str, Any]]:
     for i, item in enumerate(raw):
         if not isinstance(item, dict):
             raise ValueError(f"gold item {i} must be an object")
-        if item.get("source_chambi_id") is None:
-            raise ValueError(f"gold item {i} missing source_chambi_id")
+        if item.get("source_ethi_ambrot_id") is None:
+            raise ValueError(f"gold item {i} missing source_ethi_ambrot_id")
         row = dict(item)
-        row["source_chambi_id"] = coerce_chambi_id(row["source_chambi_id"])
+        row["source_ethi_ambrot_id"] = coerce_ethi_ambrot_id(row["source_ethi_ambrot_id"])
         out.append(row)
     return out
 
@@ -90,10 +90,10 @@ def load_predictions(path: Path) -> dict[int, dict[str, Any]]:
                 o = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if not isinstance(o, dict) or o.get("source_chambi_id") is None:
+            if not isinstance(o, dict) or o.get("source_ethi_ambrot_id") is None:
                 continue
             try:
-                cid = coerce_chambi_id(o["source_chambi_id"])
+                cid = coerce_ethi_ambrot_id(o["source_ethi_ambrot_id"])
             except (TypeError, ValueError):
                 continue
             by_id[cid] = o
@@ -229,7 +229,7 @@ def evaluate_item(
     pred_row: dict[str, Any] | None,
     threshold: float,
 ) -> dict[str, Any]:
-    cid = gold_item["source_chambi_id"]
+    cid = gold_item["source_ethi_ambrot_id"]
     input_text = gold_item.get("input_text", "")
     gold_readings = extract_gold_paraphrases(gold_item)
 
@@ -254,29 +254,65 @@ def evaluate_item(
     ra = pred_reading_a if pred_reading_a is not None else ""
     rb = pred_reading_b if pred_reading_b is not None else ""
 
-    covered: list[bool] = []
-    best_sims: list[float] = []
-    for g in gold_readings:
-        sim_a = text_similarity(g, ra)
-        sim_b = text_similarity(g, rb)
-        best = max(sim_a, sim_b)
-        best_sims.append(best)
-        covered.append(best >= threshold)
-
-    gold_a_best: float | None = best_sims[0] if len(best_sims) > 0 else None
-    gold_b_best: float | None = best_sims[1] if len(best_sims) > 1 else None
+    # 一对一最优匹配：尝试两种 assignment，取更优的
+    # Assignment 1: predA→goldA, predB→goldB
+    # Assignment 2: predA→goldB, predB→goldA
 
     if len(gold_readings) == 0:
         item_recall = 0.0
+        double_correct = False
+        covered = []
+        best_sims = []
+        gold_a_best = None
+        gold_b_best = None
+        assignment = None
+    elif len(gold_readings) == 1:
+        # 单 gold reading：取 max(predA, predB)
+        g = gold_readings[0]
+        sim_a = text_similarity(g, ra)
+        sim_b = text_similarity(g, rb)
+        best = max(sim_a, sim_b)
+        covered = [best >= threshold]
+        best_sims = [best]
+        item_recall = 1.0 if covered[0] else 0.0
+        double_correct = False
+        gold_a_best = best
+        gold_b_best = None
+        assignment = None
     else:
-        item_recall = sum(1 for c in covered if c) / len(gold_readings)
+        # 双 gold reading：一对一最优匹配
+        g0, g1 = gold_readings[0], gold_readings[1]
 
-    double_correct = (
-        len(gold_readings) == 2 and len(covered) == 2 and covered[0] and covered[1]
-    )
+        # Assignment 1: predA→g0, predB→g1
+        sim_a0 = text_similarity(g0, ra)
+        sim_b1 = text_similarity(g1, rb)
+        score_assign1 = sim_a0 + sim_b1
+
+        # Assignment 2: predA→g1, predB→g0
+        sim_a1 = text_similarity(g1, ra)
+        sim_b0 = text_similarity(g0, rb)
+        score_assign2 = sim_a1 + sim_b0
+
+        if score_assign1 >= score_assign2:
+            # 选 assignment 1
+            assignment = "predA→gold0, predB→gold1"
+            gold_a_best = sim_a0
+            gold_b_best = sim_b1
+            covered = [sim_a0 >= threshold, sim_b1 >= threshold]
+            best_sims = [sim_a0, sim_b1]
+        else:
+            # 选 assignment 2
+            assignment = "predA→gold1, predB→gold0"
+            gold_a_best = sim_a1
+            gold_b_best = sim_b0
+            covered = [sim_a1 >= threshold, sim_b0 >= threshold]
+            best_sims = [sim_a1, sim_b0]
+
+        item_recall = sum(1 for c in covered if c) / 2.0
+        double_correct = covered[0] and covered[1]
 
     return {
-        "source_chambi_id": cid,
+        "source_ethi_ambrot_id": cid,
         "input_text": input_text,
         "gold_readings": gold_readings,
         "pred_reading_a": pred_reading_a,
@@ -287,6 +323,7 @@ def evaluate_item(
         "covered_gold_readings": covered,
         "reading_coverage_recall": item_recall,
         "double_correct": double_correct,
+        "assignment": assignment,
         "errors": errors,
     }
 
@@ -302,13 +339,13 @@ def compute_summary(
     )
     num_missing_predictions = num_gold_items - num_matched_items
 
-    two_ok = sum(
+    two_valid_distinct_ok = sum(
         1
         for d in detail_rows
         if "missing_prediction" not in d.get("errors", []) and d["has_two_valid_readings"]
     )
-    two_reading_recovery_rate = (
-        two_ok / num_matched_items if num_matched_items > 0 else 0.0
+    two_valid_distinct_reading_rate = (
+        two_valid_distinct_ok / num_matched_items if num_matched_items > 0 else 0.0
     )
 
     total_gold_readings = sum(len(d["gold_readings"]) for d in detail_rows)
@@ -321,9 +358,7 @@ def compute_summary(
 
     dual_gold = [d for d in detail_rows if len(d["gold_readings"]) == 2]
     double_ok = sum(1 for d in dual_gold if d["double_correct"])
-    double_correct_rate = (
-        double_ok / len(dual_gold) if dual_gold else 0.0
-    )
+    two_reading_recovery_rate = double_ok / len(dual_gold) if dual_gold else 0.0
 
     if pred_effective_counts:
         average_predicted_reading_count = sum(pred_effective_counts) / len(
@@ -337,9 +372,11 @@ def compute_summary(
         "num_prediction_items": num_prediction_items,
         "num_matched_items": num_matched_items,
         "num_missing_predictions": num_missing_predictions,
+        "num_dual_reading_gold_items": len(dual_gold),
+        "two_valid_distinct_reading_rate": two_valid_distinct_reading_rate,
         "two_reading_recovery_rate": two_reading_recovery_rate,
         "reading_coverage_recall": reading_coverage_recall,
-        "double_correct_rate": double_correct_rate,
+        "double_correct_rate": two_reading_recovery_rate,
         "average_predicted_reading_count": average_predicted_reading_count,
     }
 
@@ -399,7 +436,7 @@ def main() -> int:
         "--gold",
         type=Path,
         default=_DEFAULT_GOLD,
-        help="Gold benchmark JSON (default: data/Chambi_benchmark_compact.json under repo root)",
+        help="Gold benchmark JSON (default: data/ethi_ambrot_benchmark_compact.json under repo root)",
     )
     ap.add_argument(
         "--predictions",
@@ -461,7 +498,7 @@ def main() -> int:
 
     detail_rows: list[dict[str, Any]] = []
     for g in gold_items:
-        cid = g["source_chambi_id"]
+        cid = g["source_ethi_ambrot_id"]
         pr = pred_map.get(cid)
         detail_rows.append(evaluate_item(g, pr, args.threshold))
 

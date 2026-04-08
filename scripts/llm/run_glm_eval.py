@@ -3,7 +3,8 @@
 """
     python scripts/llm/run_glm_eval.py [--phase 1|2] [--phase1-jsonl ...] [--dataset ...]
 
-phase 2 须提供 ``--phase1-jsonl``。默认：``output/test1/glm.jsonl`` / ``output/test2/glm.jsonl``
+phase 2 须提供 ``--phase1-jsonl``。默认输出名含 **``GLM_MODEL``**（如 ``output/test1/glm-4-air.jsonl``），不同型号互不续跑。
+``--no-resume`` 不重写旧文件：在同级目录新建 ``<model>_1.jsonl``、``<model>_2.jsonl``…（按已有文件取最大编号 +1）。
 
 使用 **OpenAI 兼容** 客户端连接智谱（与官方示例同一 REST 前缀），免费模型示例见：
 https://docs.bigmodel.cn/cn/guide/models/free/glm-4.7-flash
@@ -46,21 +47,19 @@ from ethi_ambrot.common_eval_utils import (
     append_jsonl,
     build_phase2_main_record,
     build_user_content_for_phase,
-    clear_jsonl_for_full_rerun,
     configure_shared_eval_args,
-    dataset_by_chambi_id,
-    default_eval_jsonl_path,
+    dataset_by_ethi_ambrot_id,
+    default_glm_eval_jsonl_path,
     load_dataset,
     load_done_ids,
     load_env_candidates,
     parse_model_record,
     parse_response_for_phase,
     phase2_cli_error,
+    resolve_jsonl_path_for_no_resume,
 )
 from ethi_ambrot.eval_prompt import build_prompt_phase2_main
 from ethi_ambrot.phase2_main import iter_phase2_main_candidates
-
-_PROVIDER = "glm"
 
 # 与智谱开放文档中 GLM-4.7-Flash 的 model 字段一致；可通过 GLM_MODEL 覆盖
 _DEFAULT_GLM_MODEL = "glm-4.7-flash"
@@ -219,7 +218,7 @@ def main() -> int:
 
     load_env_candidates(REPO_ROOT)
 
-    ap = argparse.ArgumentParser(description="Run GLM (Zhipu OpenAI-compatible) on Chambi benchmark compact")
+    ap = argparse.ArgumentParser(description="Run GLM (Zhipu OpenAI-compatible) on Ethi-AmbRoT benchmark compact")
     configure_shared_eval_args(ap)
     args = ap.parse_args()
     err_msg = phase2_cli_error(args.phase, args.phase1_jsonl)
@@ -227,10 +226,12 @@ def main() -> int:
         print(err_msg, file=sys.stderr)
         return 1
 
-    if args.output is None:
-        args.output = default_eval_jsonl_path(_PROVIDER, args.phase)
+    api_key, base_url, model, timeout_sec = _glm_config()
 
-    clear_jsonl_for_full_rerun(args.output, no_resume=args.no_resume)
+    if args.output is None:
+        args.output = default_glm_eval_jsonl_path(args.phase, model)
+
+    args.output = resolve_jsonl_path_for_no_resume(args.output, no_resume=args.no_resume)
 
     raw_interval = (os.environ.get("GLM_MIN_REQUEST_INTERVAL") or "").strip()
     if raw_interval:
@@ -244,7 +245,6 @@ def main() -> int:
                 file=sys.stderr,
             )
 
-    api_key, base_url, model, timeout_sec = _glm_config()
     client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_sec)
 
     _startup_cooldown()
@@ -255,7 +255,7 @@ def main() -> int:
         print(f"Dataset error: {e}", file=sys.stderr)
         return 1
 
-    dataset_idx = dataset_by_chambi_id(items)
+    dataset_idx = dataset_by_ethi_ambrot_id(items)
     done_ids = load_done_ids(args.output, eval_phase=args.phase)
     model_name = model
     new_count = 0
@@ -265,7 +265,7 @@ def main() -> int:
         for item in items:
             if args.limit is not None and new_count >= args.limit:
                 break
-            sid = item.get("source_chambi_id")
+            sid = item.get("source_ethi_ambrot_id")
             input_text = item.get("input_text")
             if sid is None or not isinstance(input_text, str):
                 print(f"Skip malformed row: {item!r}", file=sys.stderr)
@@ -281,7 +281,7 @@ def main() -> int:
                 append_jsonl(args.output, rec)
                 new_count += 1
                 print(
-                    f"[{new_count}] source_chambi_id={sid} phase=1 success=False ({prep_err})",
+                    f"[{new_count}] source_ethi_ambrot_id={sid} phase=1 success=False ({prep_err})",
                     flush=True,
                 )
                 time.sleep(max(0.0, args.sleep))
@@ -318,7 +318,7 @@ def main() -> int:
                 done_ids.add(sid)
             new_count += 1
             print(
-                f"[{new_count}] source_chambi_id={sid} phase=1 success={ok} (dataset {total})",
+                f"[{new_count}] source_ethi_ambrot_id={sid} phase=1 success={ok} (dataset {total})",
                 flush=True,
             )
             time.sleep(max(0.0, args.sleep))
@@ -377,7 +377,7 @@ def main() -> int:
                 done_ids.add(sid)
             new_count += 1
             print(
-                f"[{new_count}] source_chambi_id={sid} phase=2 success={ok} (candidates {total})",
+                f"[{new_count}] source_ethi_ambrot_id={sid} phase=2 success={ok} (candidates {total})",
                 flush=True,
             )
             time.sleep(max(0.0, args.sleep))

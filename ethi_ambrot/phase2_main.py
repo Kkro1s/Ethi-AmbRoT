@@ -2,7 +2,7 @@
 Phase 2-main：双解读样本过滤、模型输出解析、价值维度枚举。
 
 Phase1 JSONL → ``iter_phase2_main_candidates`` → runner 仅用 input_text + reading_a/b 调用模型；
-gold 仅在 ``scripts/evaluation/evaluate_phase2_main.py`` 中使用。
+gold 标签不包含在模型提示中，仅用于离线评测。
 """
 
 from __future__ import annotations
@@ -143,7 +143,7 @@ def _last_success_phase1_by_id(path: Path) -> dict[Any, dict[str, Any]]:
             pr = rec.get("parsed_response")
             if not isinstance(pr, dict):
                 continue
-            sid = rec.get("source_chambi_id")
+            sid = rec.get("source_ethi_ambrot_id")
             if sid is None:
                 continue
             ep = rec.get("eval_phase")
@@ -162,7 +162,7 @@ def _sort_sid(sid: Any) -> tuple[int, Any]:
 
 def iter_phase2_main_candidates(phase1_jsonl_path: Path) -> list[tuple[Any, str, str, str]]:
     """
-    从 phase1 JSONL 得到 (source_chambi_id, input_text, reading_a, reading_b) 列表；
+    从 phase1 JSONL 得到 (source_ethi_ambrot_id, input_text, reading_a, reading_b) 列表；
     input_text 来自 phase1 行内字段（runner 中会以 dataset 覆盖为权威）。
     """
     by_id = _last_success_phase1_by_id(phase1_jsonl_path)
@@ -209,8 +209,9 @@ def parse_phase2_main_response(raw: str) -> dict[str, Any] | None:
     if not raw or not str(raw).strip():
         return None
     t = _strip_markdown_json_fence(str(raw).strip())
-    ma = re.search(r"【解读A】", t)
-    mb = re.search(r"【解读B】", t)
+    # 模型常在「解读」与 A/B 之间加空格（如「解读 A」）
+    ma = re.search(r"【解读\s*A\s*】", t)
+    mb = re.search(r"【解读\s*B\s*】", t)
     if not ma or not mb or mb.start() < ma.end():
         return None
     block_a = t[ma.end() : mb.start()].strip()

@@ -7,10 +7,11 @@
 
 phase 2（Phase 2-main）必须提供 ``--phase1-jsonl``，仅跑 phase1 中通过双解读过滤的样本。
 
-默认结果：``output/test1/qwen.jsonl`` / ``output/test2/qwen.jsonl``。
+默认结果：``output/test1/{qwen}_{model}.jsonl``（如 ``qwen_qwen-max.jsonl``），与 ``QWEN_MODEL`` / ``QWEN_MODEL_NAME`` 对应。
 
 Env: QWEN_API_KEY (or QWEN_MAX_API_KEY / DASHSCOPE_API_KEY), QWEN_BASE_URL (optional,
-default https://dashscope.aliyuncs.com/compatible-mode/v1), QWEN_MODEL.
+default https://dashscope.aliyuncs.com/compatible-mode/v1). Model: QWEN_MODEL,
+QWEN_MODEL_NAME, or QWEN_MAX_MODEL_NAME (default qwen-max).
 Optional: QWEN_TIMEOUT or QWEN_MAX_TIMEOUT (seconds, default 180).
 """
 
@@ -32,16 +33,16 @@ from ethi_ambrot.common_eval_utils import (
     append_jsonl,
     build_phase2_main_record,
     build_user_content_for_phase,
-    clear_jsonl_for_full_rerun,
     configure_shared_eval_args,
-    dataset_by_chambi_id,
-    default_eval_jsonl_path,
+    dataset_by_ethi_ambrot_id,
+    default_eval_jsonl_path_for_provider_model,
     load_dataset,
     load_done_ids,
     load_env_candidates,
     parse_model_record,
     parse_response_for_phase,
     phase2_cli_error,
+    resolve_jsonl_path_for_no_resume,
 )
 from ethi_ambrot.eval_prompt import build_prompt_phase2_main
 from ethi_ambrot.phase2_main import iter_phase2_main_candidates
@@ -66,9 +67,14 @@ def _qwen_config() -> tuple[str, str, str, float]:
         os.environ.get("QWEN_BASE_URL")
         or os.environ.get("QWEN_MAX_API_BASE_URL")
         or "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    ).strip()
+    ).strip().rstrip("/")
+    if base_url.endswith("/chat/completions"):
+        base_url = base_url[: -len("/chat/completions")].rstrip("/")
     model = (
-        os.environ.get("QWEN_MODEL") or os.environ.get("QWEN_MAX_MODEL_NAME") or "qwen-max"
+        os.environ.get("QWEN_MODEL")
+        or os.environ.get("QWEN_MODEL_NAME")
+        or os.environ.get("QWEN_MAX_MODEL_NAME")
+        or "qwen-max"
     ).strip()
     timeout_raw = os.environ.get("QWEN_MAX_TIMEOUT") or os.environ.get("QWEN_TIMEOUT")
     try:
@@ -87,7 +93,7 @@ def main() -> int:
 
     load_env_candidates(REPO_ROOT)
 
-    ap = argparse.ArgumentParser(description="Run Qwen (DashScope-compatible) on Chambi benchmark compact")
+    ap = argparse.ArgumentParser(description="Run Qwen (DashScope-compatible) on Ethi-AmbRoT benchmark compact")
     configure_shared_eval_args(ap)
     args = ap.parse_args()
     err_msg = phase2_cli_error(args.phase, args.phase1_jsonl)
@@ -95,12 +101,13 @@ def main() -> int:
         print(err_msg, file=sys.stderr)
         return 1
 
-    if args.output is None:
-        args.output = default_eval_jsonl_path(_PROVIDER, args.phase)
-
-    clear_jsonl_for_full_rerun(args.output, no_resume=args.no_resume)
-
     api_key, base_url, model, timeout_sec = _qwen_config()
+
+    if args.output is None:
+        args.output = default_eval_jsonl_path_for_provider_model(args.phase, _PROVIDER, model)
+
+    args.output = resolve_jsonl_path_for_no_resume(args.output, no_resume=args.no_resume)
+
     client: Any = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_sec)
 
     try:
@@ -109,7 +116,7 @@ def main() -> int:
         print(f"Dataset error: {e}", file=sys.stderr)
         return 1
 
-    dataset_idx = dataset_by_chambi_id(items)
+    dataset_idx = dataset_by_ethi_ambrot_id(items)
     done_ids = load_done_ids(args.output, eval_phase=args.phase)
     model_name = model
     new_count = 0
@@ -119,7 +126,7 @@ def main() -> int:
         for item in items:
             if args.limit is not None and new_count >= args.limit:
                 break
-            sid = item.get("source_chambi_id")
+            sid = item.get("source_ethi_ambrot_id")
             input_text = item.get("input_text")
             if sid is None or not isinstance(input_text, str):
                 print(f"Skip malformed row (missing id or input_text): {item!r}", file=sys.stderr)
@@ -134,7 +141,7 @@ def main() -> int:
                 )
                 append_jsonl(args.output, rec)
                 new_count += 1
-                print(f"[{new_count}] source_chambi_id={sid} phase=1 success=False ({prep_err})", flush=True)
+                print(f"[{new_count}] source_ethi_ambrot_id={sid} phase=1 success=False ({prep_err})", flush=True)
                 time.sleep(max(0.0, args.sleep))
                 continue
 
@@ -163,7 +170,7 @@ def main() -> int:
             if ok:
                 done_ids.add(sid)
             new_count += 1
-            print(f"[{new_count}] source_chambi_id={sid} phase=1 success={ok} (dataset {total})", flush=True)
+            print(f"[{new_count}] source_ethi_ambrot_id={sid} phase=1 success={ok} (dataset {total})", flush=True)
             time.sleep(max(0.0, args.sleep))
     else:
         candidates = iter_phase2_main_candidates(args.phase1_jsonl)
@@ -222,7 +229,7 @@ def main() -> int:
             if ok:
                 done_ids.add(sid)
             new_count += 1
-            print(f"[{new_count}] source_chambi_id={sid} phase=2 success={ok} (candidates {total})", flush=True)
+            print(f"[{new_count}] source_ethi_ambrot_id={sid} phase=2 success={ok} (candidates {total})", flush=True)
             time.sleep(max(0.0, args.sleep))
 
     return 0

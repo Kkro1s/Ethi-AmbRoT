@@ -1,5 +1,5 @@
-# Chambi Multi-Model Benchmark Evaluation
-# Chambi 多模型基准评测
+# Ethi-AmbRoT Multi-Model Benchmark Evaluation
+# Ethi-AmbRoT 多模型基准评测
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![OpenAI SDK](https://img.shields.io/badge/SDK-openai-green.svg)](https://github.com/openai/openai-python)
@@ -12,7 +12,7 @@
 
 ## English
 
-Batch-evaluate **Chambi-style** Chinese ambiguity–value alignment benchmarks by calling multiple cloud LLMs through the **OpenAI-compatible Chat Completions API**. Predictions are appended as **JSONL** (UTF-8) with **resume support** and **per-line `fsync`**, ready for offline comparison against gold labels.
+Batch-evaluate the **Ethi-AmbRoT** Chinese ambiguity–value alignment benchmark by calling multiple cloud LLMs through the **OpenAI-compatible Chat Completions API**. Predictions are appended as **JSONL** (UTF-8) with **resume support** and **per-line `fsync`**, ready for offline comparison against gold labels.
 
 ### Table of contents (English)
 
@@ -35,7 +35,7 @@ Batch-evaluate **Chambi-style** Chinese ambiguity–value alignment benchmarks b
 - **Shared eval logic** in package `ethi_ambrot`: `eval_prompt.py` (test1 **and** test2 prompts), `common_eval_utils.py` (dataset I/O, phase-aware parsing, `extract_json_object` for legacy/exports, JSONL append, done-id set for resume).
 - **Two-phase evaluation** via `--phase 1` (readings / 原句+解读) and `--phase 2` **Phase 2-main** (RoT + value alignment for **two readings taken from phase 1 JSONL**). Phase 2 requires `--phase1-jsonl`; only **dual-reading** phase-1 successes (distinct A/B) are evaluated. Defaults: **`output/test1/`** and **`output/test2/<provider>.jsonl`**.
 - **No gold in the model prompt**: test1 uses only `input_text`; test2 uses `input_text` + `readings[].paraphrase` (never `gold_rot` / `gold_value_alignment` in the message). Other gold stays in the JSON for offline scoring.
-- **Parsing**: test1 uses a Chinese layout parser (`parse_test1_response`); test2 stores a placeholder dict with `free_text` until the final output schema is fixed; `extract_json_object` remains for tooling that still consumes JSON.
+- **Parsing**: test1 uses a Chinese layout parser (`parse_test1_response`); test2 parses `【解读A/B】` into nested `reading_a` / `reading_b` fields for offline scoring; `extract_json_object` remains for tooling that still consumes JSON.
 - **Durable writes**: each line is followed by `flush()` + `os.fsync()` for long batch jobs.
 - **Env-driven config**: keys, base URLs, and model names from the environment; optional repo `.env` (does not override existing exports).
 
@@ -59,15 +59,17 @@ Batch-evaluate **Chambi-style** Chinese ambiguity–value alignment benchmarks b
 │   │   ├── run_doubao_eval.py
 │   │   ├── run_gpt_eval.py
 │   │   └── run_glm_eval.py
-│   ├── dataset/                   # Chambi → compact JSON, JSONL → JSON export
+│   ├── dataset/                   # Ethi-AmbRoT data prep, JSONL → JSON export
 │   │   ├── generate_rot_dataset.py
 │   │   └── export_predictions_json.py
-│   └── evaluation/                # offline metrics vs gold
-│       └── evaluate_phase2_main.py
-├── data/                          # benchmark JSON (and full Chambi exports)
-│   ├── Chambi_benchmark_compact.json
-│   ├── Chambi.json
-│   └── Chambi_rot_enhanced.json
+│   └── evaluation/                # offline evaluation
+│       ├── evaluate_phase1.py     # strict reading recovery vs gold
+│       ├── evaluate_phase2_judge.py
+│       └── evaluate_overall.py    # end-to-end overall benchmark score
+├── data/                          # Ethi-AmbRoT benchmark JSON
+│   ├── ethi_ambrot_benchmark_compact.json
+│   ├── ethi_ambrot.json
+
 └── output/                        # eval JSONL by phase (gitignored)
     ├── test1/                     # phase 1 — ambiguity & readings
     │   └── qwen.jsonl …
@@ -137,7 +139,7 @@ python scripts/llm/run_glm_eval.py
 
 | Flag | Meaning |
 |------|---------|
-| `--dataset` | Path to benchmark JSON array (default: `data/Chambi_benchmark_compact.json` via `ethi_ambrot.common_eval_utils.DEFAULT_DATASET`) |
+| `--dataset` | Path to benchmark JSON array (default: `data/ethi_ambrot_benchmark_compact.json` via `ethi_ambrot.common_eval_utils.DEFAULT_DATASET`) |
 | `--phase` | `1` = phase1；`2` = Phase 2-main（须同时提供 `--phase1-jsonl`）。 |
 | `--phase1-jsonl` | Phase1 的 JSONL；**`--phase 2` 时必填**。 |
 | `--output` | JSONL path (default: `output/test<phase>/<provider>.jsonl`) |
@@ -145,7 +147,7 @@ python scripts/llm/run_glm_eval.py
 | `--sleep` | Seconds to sleep after each API call (default `0.4`) |
 
 ```bash
-python scripts/llm/run_qwen_eval.py --dataset ./data/Chambi_benchmark_compact.json --limit 50 --sleep 0.5
+python scripts/llm/run_qwen_eval.py --dataset ./data/ethi_ambrot_benchmark_compact.json --limit 50 --sleep 0.5
 ```
 
 <a id="output-format-en"></a>
@@ -156,7 +158,7 @@ One JSON object per line (UTF-8):
 
 ```json
 {
-  "source_chambi_id": 0,
+  "source_ethi_ambrot_id": 0,
   "input_text": "……",
   "model_name": "……",
   "raw_response": "……",
@@ -188,13 +190,17 @@ Rows with `success: false` are **retried**. Using a different `--output` path or
 ### Customizing prompt & dataset path
 
 - **Prompts**: edit `PROMPT_TEST1_TEMPLATE` / `PROMPT_TEST2_TEMPLATE` and builders in `ethi_ambrot/eval_prompt.py` (all four runners call the same helpers via `common_eval_utils.build_user_content_for_phase`).
-- **Default dataset path**: `DEFAULT_DATASET` is **`<repo>/data/Chambi_benchmark_compact.json`**; override with `--dataset` if you store files elsewhere.
+- **Default dataset path**: `DEFAULT_DATASET` is **`<repo>/data/ethi_ambrot_benchmark_compact.json`**; override with `--dataset` if you store files elsewhere.
 
 <a id="related-tooling-en"></a>
 
 ### Related tooling
 
-- **`scripts/dataset/generate_rot_dataset.py`**: Chambi → compact benchmark JSON. **`scripts/dataset/export_predictions_json.py`**: merge prediction JSONL into one JSON file. **`scripts/evaluation/evaluate_phase2_main.py`**: score Phase 2-main JSONL vs dataset gold (RoT, value, differential metrics). Examples: `python scripts/llm/run_glm_eval.py --phase 2 --phase1-jsonl output/test1/glm.jsonl`; `python scripts/evaluation/evaluate_phase2_main.py -p output/test2/glm.jsonl -d data/Chambi_benchmark_compact.json -o output/eval_reports/glm_p2.json`.
+- **`scripts/dataset/generate_rot_dataset.py`**: Ethi-AmbRoT → compact benchmark JSON.
+- **`scripts/dataset/export_predictions_json.py`**: merge prediction JSONL into one JSON file.
+- **`scripts/evaluation/evaluate_phase1.py`**: official Phase 1 reading-recovery evaluation. The main metric is `two_reading_recovery_rate`, computed by strict one-to-one matching between predicted A/B and the two gold readings.
+- **`scripts/evaluation/evaluate_phase2_judge.py`**: official Phase 2 LLM-as-judge evaluation. Before judging, predicted A/B are aligned to the two gold readings by the better of the two possible A/B assignments; the main results are `avg_item_score` / `avg_score_rot_overall`.
+- **`scripts/evaluation/evaluate_overall.py`**: computes the end-to-end overall benchmark score by combining Phase 1 strict recovery and Phase 2 judge quality. Items failing Phase 1 receive zero; successful items receive normalized Phase 2 scores.
 
 <a id="license-en"></a>
 
@@ -208,7 +214,7 @@ Add a `LICENSE` file (e.g. MIT) before open-sourcing. For issues/PRs, include Py
 
 ## 中文
 
-基于 **Chambi** 风格的中文歧义—价值对齐基准，通过 **OpenAI 兼容的 Chat Completions API** 批量调用多个云端 LLM，将预测以 **JSONL**（UTF-8）追加落盘，支持 **断点续跑** 与 **逐条 fsync**，便于与 gold 对齐做线下评测。
+用于批量评测 **Ethi-AmbRoT** 中文歧义—价值对齐基准：通过 **OpenAI 兼容的 Chat Completions API** 调用多个云端 LLM，将预测以 **JSONL**（UTF-8）追加落盘，支持 **断点续跑** 与 **逐条 fsync**，便于与 gold 对齐做线下评测。
 
 ### 目录（中文）
 
@@ -230,7 +236,7 @@ Add a `LICENSE` file (e.g. MIT) before open-sourcing. For issues/PRs, include Py
 
 - **统一评测逻辑**：`ethi_ambrot/eval_prompt.py` 提供测试1 / 测试2 文案；`common_eval_utils.py` 负责读数据、按 `--phase` 构造 user 内容、解析、JSONL 与续跑（含 `extract_json_object` 供导出等场景）。
 - **两阶段参数**：`--phase 1` 为解读任务；`--phase 2` 为 **Phase 2-main**，须指定 `--phase1-jsonl`，仅对 phase1 中**有效双解读**样本跑 RoT/价值分析；`input_text` 以数据集中为准。默认 `output/test1/`、`output/test2/`。
-- **不把 gold 写进模型输入**：phase2 仅 `input_text` + phase1 的 `reading_a` / `reading_b`；`gold_rot` 等只在 `evaluate_phase2_main.py` 中对比。
+- **不把 gold 写进模型输入**：phase2 仅 `input_text` + phase1 的 `reading_a` / `reading_b`；gold 标签不包含在模型提示中。
 - **解析**：phase1 中文版式；phase2 为 `【解读A/B】` 下六字「社会规范…理由」半结构化解析为嵌套字段。
 - **可靠落盘**：每条写入后 `flush()` + `os.fsync()`，适合长时间批量任务。
 - **环境变量驱动**：密钥、Base URL、模型名从环境读取；可选用项目根 `.env`（不覆盖已有 `export`）。
@@ -259,11 +265,13 @@ Add a `LICENSE` file (e.g. MIT) before open-sourcing. For issues/PRs, include Py
 │   │   ├── generate_rot_dataset.py
 │   │   └── export_predictions_json.py
 │   └── evaluation/
-│       └── evaluate_phase2_main.py
+│       ├── evaluate_phase1.py
+│       ├── evaluate_phase2_judge.py
+│       └── evaluate_overall.py
 ├── data/                          # 数据 JSON
-│   ├── Chambi_benchmark_compact.json
-│   ├── Chambi.json
-│   └── Chambi_rot_enhanced.json
+│   ├── ethi_ambrot_benchmark_compact.json
+│   ├── ethi_ambrot.json
+
 └── output/                        # 按阶段分子目录（.gitignore）
     ├── test1/
     └── test2/
@@ -330,7 +338,7 @@ python scripts/llm/run_glm_eval.py
 
 | 参数 | 说明 |
 |------|------|
-| `--dataset` | 基准 JSON 路径（默认 `data/Chambi_benchmark_compact.json`） |
+| `--dataset` | 基准 JSON 路径（默认 `data/ethi_ambrot_benchmark_compact.json`） |
 | `--phase` | `1`：phase1；`2`：Phase 2-main（须 `--phase1-jsonl`）。 |
 | `--phase1-jsonl` | **`--phase 2` 必填**，phase1 输出 JSONL。 |
 | `--output` | JSONL 路径（默认 `output/test<phase>/<厂商>.jsonl`） |
@@ -338,7 +346,7 @@ python scripts/llm/run_glm_eval.py
 | `--sleep` | 每条请求后休眠秒数（默认 `0.4`） |
 
 ```bash
-python scripts/llm/run_qwen_eval.py --dataset ./data/Chambi_benchmark_compact.json --limit 50 --sleep 0.5
+python scripts/llm/run_qwen_eval.py --dataset ./data/ethi_ambrot_benchmark_compact.json --limit 50 --sleep 0.5
 ```
 
 <a id="输出格式"></a>
@@ -349,7 +357,7 @@ python scripts/llm/run_qwen_eval.py --dataset ./data/Chambi_benchmark_compact.js
 
 ```json
 {
-  "source_chambi_id": 0,
+  "source_ethi_ambrot_id": 0,
   "input_text": "……",
   "model_name": "……",
   "raw_response": "……",
@@ -368,7 +376,7 @@ python scripts/llm/run_qwen_eval.py --dataset ./data/Chambi_benchmark_compact.js
 
 ### 续跑规则
 
-仅当**同时**满足下列条件时，`source_chambi_id` 视为已完成，下次运行会跳过：
+仅当**同时**满足下列条件时，`source_ethi_ambrot_id` 视为已完成，下次运行会跳过：
 
 ```python
 record.get("success") is True and record.get("parsed_response") is not None
@@ -381,15 +389,17 @@ record.get("success") is True and record.get("parsed_response") is not None
 ### 自定义 Prompt 与数据路径
 
 - **Prompt**：修改 `ethi_ambrot/eval_prompt.py` 中的 `PROMPT_TEST1_TEMPLATE` / `PROMPT_TEST2_TEMPLATE`；四脚本通过 `build_user_content_for_phase` 共用。
-- **默认数据路径**：`DEFAULT_DATASET` 为 **`<仓库根>/data/Chambi_benchmark_compact.json`**；其他位置请用 `--dataset`。
+- **默认数据路径**：`DEFAULT_DATASET` 为 **`<仓库根>/data/ethi_ambrot_benchmark_compact.json`**；其他位置请用 `--dataset`。
 
 <a id="相关脚本"></a>
 
 ### 相关脚本
 
-- **`scripts/dataset/generate_rot_dataset.py`**：Chambi → 精简 benchmark。
+- **`scripts/dataset/generate_rot_dataset.py`**：Ethi-AmbRoT → 精简 benchmark。
 - **`scripts/dataset/export_predictions_json.py`**：评测 JSONL 合并为单个 JSON。
-- **`scripts/evaluation/evaluate_phase2_main.py`**：Phase 2-main 与 gold 的离线指标（RoT、价值、A/B 区分度）。
+- **`scripts/evaluation/evaluate_phase1.py`**：Phase 1 正式评测脚本。主指标为 `two_reading_recovery_rate`，采用预测 A/B 与 gold 双解读之间的严格一对一匹配。
+- **`scripts/evaluation/evaluate_phase2_judge.py`**：Phase 2 的 LLM-as-judge 正式评测脚本。评测前会在预测 A/B 与 gold 双解读之间做两种配对中的最优对齐；主结果建议看 `avg_item_score` / `avg_score_rot_overall`。
+- **`scripts/evaluation/evaluate_overall.py`**：计算 benchmark 的 end-to-end overall 分数，结合 Phase 1 严格恢复与 Phase 2 judge 质量。Phase 1 未通过的样本得 0 分；通过的样本按 Phase 2 归一化分数计分。
 
 <a id="许可证"></a>
 

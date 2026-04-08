@@ -8,8 +8,8 @@
     python scripts/dataset/export_predictions_json.py --input output/test1/glm.jsonl
     python scripts/dataset/export_predictions_json.py -i output/test1/glm.jsonl -o output/test1/glm.json --mode benchmark
 
---mode full        每行一条完整记录（含 raw_response、error 等），按 source_chambi_id 排序
---mode benchmark   仅 success 且含 parsed_response 的条，每条为 { **parsed_response, \"source_chambi_id\": ... , \"eval_phase\"? }，按 id 排序
+--mode full        每行一条完整记录（含 raw_response、error 等），按 source_ethi_ambrot_id 排序
+--mode benchmark   仅 success 且含 parsed_response 的条，每条为 { **parsed_response, \"source_ethi_ambrot_id\": ... , \"eval_phase\"? }，按 id 排序
                    （phase1 字段；phase2-main：嵌套 reading_a/b；旧 phase2 可能为 phase2_placeholder；历史 ambiguity_judgment / ambiguity_type）
 
 可同时 --validate：自动识别 test1 / test2 占位 / new（ambiguity_judgment）/ legacy（ambiguity_type）并做粗粒度校验。
@@ -59,7 +59,7 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def sort_key(row: dict[str, Any]) -> tuple[int, Any]:
-    sid = row.get("source_chambi_id")
+    sid = row.get("source_ethi_ambrot_id")
     try:
         return (0, int(sid))  # type: ignore[arg-type]
     except (TypeError, ValueError):
@@ -74,8 +74,8 @@ def to_benchmark_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         pr = r.get("parsed_response")
         if not isinstance(pr, dict):
             continue
-        sid = r.get("source_chambi_id")
-        item = {**pr, "source_chambi_id": sid}
+        sid = r.get("source_ethi_ambrot_id")
+        item = {**pr, "source_ethi_ambrot_id": sid}
         ep = r.get("eval_phase")
         if ep is not None:
             item["eval_phase"] = ep

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-基于 Chambi.json 调用 Qwen，生成与规定完全一致的「精简版 benchmark」JSON。
+基于 ethi_ambrot.json 调用 Qwen，生成与规定完全一致的「精简版 benchmark」JSON。
 
-**输出文件**（默认）：仅含**已成功生成**的条目，按 `source_chambi_id` 升序排列；每条在 schema 之外多一个
-`source_chambi_id`（对应 Chambi 的 `id`），便于续跑与对齐；提交论文前可自行删除该键。
+**输出文件**（默认）：仅含**已成功生成**的条目，按 `source_ethi_ambrot_id` 升序排列；每条在 schema 之外多一个
+`source_ethi_ambrot_id`（对应原始数据的 `id`），便于续跑与对齐；提交论文前可自行删除该键。
 
-若需要与 `Chambi.json` **等长**、缺项填 `null`，请加 `--pad-nulls`。
+若需要与 `ethi_ambrot.json` **等长**、缺项填 `null`，请加 `--pad-nulls`。
 
 ## 运行示例
 
@@ -14,8 +14,8 @@
   export QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
   export QWEN_MODEL=qwen-max
 
-  python scripts/dataset/generate_rot_dataset.py --input data/Chambi.json --output data/Chambi_benchmark.json
-  python scripts/dataset/generate_rot_dataset.py --input data/Chambi.json --output out.json --start 0 --end 100 --max-items 50
+  python scripts/dataset/generate_rot_dataset.py --input data/ethi_ambrot.json --output data/ethi_ambrot_benchmark.json
+  python scripts/dataset/generate_rot_dataset.py --input data/ethi_ambrot.json --output out.json --start 0 --end 100 --max-items 50
 
 环境变量可兼用 QWEN_MAX_* / DASHSCOPE_API_KEY。
 自动依次尝试加载 .env：仓库根目录、当前工作目录、仓库根/ethi_ambrot_app、上级/ethi_ambrot_app（不覆盖已 export 的变量）。
@@ -43,17 +43,17 @@ ALLOWED_VALUE_DIMS = frozenset({"Family", "Mianzi", "Harmony", "Public Morality"
 ALLOWED_AMB_STATUS = frozenset({"open", "resolved", "partially_resolved"})
 
 # 紧凑输出时附加，便于续跑（不属于论文 schema 时可删除）
-META_CHAMBI_ID = "source_chambi_id"
+META_ETHI_AMBROT_ID = "source_ethi_ambrot_id"
 
 
-def strip_chambi_meta(d: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in d.items() if k != META_CHAMBI_ID}
+def strip_ethi_ambrot_meta(d: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in d.items() if k != META_ETHI_AMBROT_ID}
 
 
 def system_prompt_benchmark() -> str:
     return """You are an expert annotator building a Chinese ambiguity–value alignment benchmark.
 
-You will receive one Chambi-style record: ambiguous `premise`, `hypothesis`, two `disambiguations` (each expands one reading of the premise), and `category` (rough source tag in Chinese—use only as a soft hint).
+You will receive one Ethi-AmbRoT record: ambiguous `premise`, `hypothesis`, two `disambiguations` (each expands one reading of the premise), and `category` (rough source tag in Chinese—use only as a soft hint).
 
 Produce ONE JSON object. Use ONLY these keys at every level—no additional keys anywhere:
 
@@ -112,7 +112,7 @@ def build_user_prompt(item: dict[str, Any]) -> str:
             "nli_label_vs_hypothesis": dis_b.get("label", ""),
         },
         "mapping_hints_for_coarse_field": (
-            "Chambi category is NOT the same as coarse types; infer coarse from linguistic mechanism. "
+            "The source category is NOT the same as coarse types; infer coarse from linguistic mechanism. "
             "Rough hints: 词汇→often lexical or combinational; 语法→syntactic; 语义→semantic; "
             "指代/不完整→semantic or pragmatic; 停顿/重音→overlapping or pragmatic as appropriate."
         ),
@@ -238,11 +238,11 @@ def _clean_readings_align_dims(obj: dict[str, Any]) -> None:
 
 def postprocess_benchmark(
     obj: dict[str, Any],
-    chambi_premise: str,
+    ethi_ambrot_premise: str,
 ) -> dict[str, Any]:
     """Pin input_text; normalize enums where possible."""
     out = copy.deepcopy(obj)
-    out["input_text"] = chambi_premise.strip()
+    out["input_text"] = ethi_ambrot_premise.strip()
 
     amb = out.get("ambiguity_type")
     if isinstance(amb, dict) and isinstance(amb.get("coarse"), str):
@@ -421,21 +421,21 @@ def is_valid_compact(c: Any) -> bool:
 
 def extract_compact_from_saved_row(
     row: Any,
-    chambi_premise: str,
+    ethi_ambrot_premise: str,
 ) -> dict[str, Any] | None:
-    """从已落盘行提取纯 schema（支持旧版含 Chambi+benchmark 或已是纯 schema）。"""
+    """从已落盘行提取纯 schema（支持旧版含 ethi_ambrot+benchmark 或已是纯 schema）。"""
     if row is None:
         return None
     if not isinstance(row, dict):
         return None
-    row = strip_chambi_meta(row) if META_CHAMBI_ID in row else row
+    row = strip_ethi_ambrot_meta(row) if META_ETHI_AMBROT_ID in row else row
     inner: dict[str, Any] | None = None
     if isinstance(row.get("benchmark"), dict):
         inner = row["benchmark"]
-        base_premise = (row.get("premise") or chambi_premise or "").strip()
+        base_premise = (row.get("premise") or ethi_ambrot_premise or "").strip()
     elif "input_text" in row and "readings" in row and "premise" not in row:
         inner = row
-        base_premise = chambi_premise or _txt(row.get("input_text"))
+        base_premise = ethi_ambrot_premise or _txt(row.get("input_text"))
     else:
         return None
     processed = postprocess_benchmark(inner, base_premise)
@@ -579,7 +579,7 @@ def load_prev_into_by_id(prev: list[Any], full_input: list[Any]) -> dict[Any, di
             ch = full_input[i] if i < len(full_input) else None
             if not isinstance(ch, dict):
                 continue
-            rid = cell.get(META_CHAMBI_ID)
+            rid = cell.get(META_ETHI_AMBROT_ID)
             if rid is None:
                 rid = ch.get("id")
             prem_hint = (ch.get("premise") or "").strip()
@@ -588,12 +588,12 @@ def load_prev_into_by_id(prev: list[Any], full_input: list[Any]) -> dict[Any, di
                 by_id[rid] = comp
         return by_id
 
-    # 紧凑列表：带 source_chambi_id，或凭 input_text 匹配 premise
+    # 紧凑列表：带 source_ethi_ambrot_id，或凭 input_text 匹配 premise
     for cell in prev:
         if not isinstance(cell, dict):
             continue
-        rid = cell.get(META_CHAMBI_ID)
-        core = strip_chambi_meta(cell) if META_CHAMBI_ID in cell else cell
+        rid = cell.get(META_ETHI_AMBROT_ID)
+        core = strip_ethi_ambrot_meta(cell) if META_ETHI_AMBROT_ID in cell else cell
         if rid is None and core.get("input_text"):
             rid = premise_to_id.get(_txt(core["input_text"]))
         if rid is None:
@@ -635,7 +635,7 @@ def _write_output(
             c = by_id[rid]
             if not is_valid_compact(c):
                 continue
-            out_list.append({**c, META_CHAMBI_ID: rid})
+            out_list.append({**c, META_ETHI_AMBROT_ID: rid})
     output_path.write_text(
         json.dumps(out_list, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -653,9 +653,9 @@ def main() -> int:
     env_tried = load_env_for_qwen(repo_root)
 
     ap = argparse.ArgumentParser(
-        description="Chambi → Qwen → 输出与规定一致的纯精简 schema 数组（与输入等长，缺项为 null）"
+        description="Ethi-AmbRoT → Qwen → 输出与规定一致的纯精简 schema 数组（与输入等长，缺项为 null）"
     )
-    ap.add_argument("--input", type=Path, required=True, help="Chambi.json 等 JSON 数组")
+    ap.add_argument("--input", type=Path, required=True, help="ethi_ambrot.json 等 JSON 数组")
     ap.add_argument("--output", type=Path, required=True, help="输出 JSON 数组")
     ap.add_argument("--start", type=int, default=None, help="起始下标（含）")
     ap.add_argument("--end", type=int, default=None, help="结束下标（不含）")
@@ -664,7 +664,7 @@ def main() -> int:
     ap.add_argument(
         "--pad-nulls",
         action="store_true",
-        help="输出与 Chambi 等长的数组，未完成填 null（默认：紧凑输出，无 null）",
+        help="输出与原始数据等长的数组，未完成填 null（默认：紧凑输出，无 null）",
     )
     args = ap.parse_args()
 

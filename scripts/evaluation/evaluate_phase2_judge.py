@@ -46,13 +46,13 @@ from ethi_ambrot.phase2_main import (
 )
 
 
-_DEFAULT_GOLD = REPO_ROOT / "data" / "Chambi_benchmark_compact.json"
+_DEFAULT_GOLD = REPO_ROOT / "data" / "ethi_ambrot_benchmark_compact.json"
 _DEFAULT_OUT_DIR = REPO_ROOT / "output" / "phase2_judge_eval"
 
 
 def _coerce_sid(x: Any) -> int:
     if isinstance(x, bool):
-        raise TypeError("source_chambi_id cannot be bool")
+        raise TypeError("source_ethi_ambrot_id cannot be bool")
     if isinstance(x, int):
         return x
     if isinstance(x, float) and x.is_integer():
@@ -73,10 +73,10 @@ def load_predictions_last(path: Path) -> dict[int, dict[str, Any]]:
                 o = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if not isinstance(o, dict) or o.get("source_chambi_id") is None:
+            if not isinstance(o, dict) or o.get("source_ethi_ambrot_id") is None:
                 continue
             try:
-                cid = _coerce_sid(o["source_chambi_id"])
+                cid = _coerce_sid(o["source_ethi_ambrot_id"])
             except (TypeError, ValueError):
                 continue
             by_id[cid] = o
@@ -86,7 +86,7 @@ def load_predictions_last(path: Path) -> dict[int, dict[str, Any]]:
 def dataset_by_id(items: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
     out: dict[int, dict[str, Any]] = {}
     for row in items:
-        sid = row.get("source_chambi_id")
+        sid = row.get("source_ethi_ambrot_id")
         if sid is None:
             continue
         try:
@@ -129,7 +129,7 @@ def load_completed_judge_sids(detail_path: Path) -> set[int]:
         if ja.get("score_rot") not in (1, 2, 3) or jb.get("score_rot") not in (1, 2, 3):
             continue
         try:
-            done.add(_coerce_sid(o["source_chambi_id"]))
+            done.add(_coerce_sid(o["source_ethi_ambrot_id"]))
         except (TypeError, ValueError):
             continue
     return done
@@ -223,6 +223,68 @@ def judge_config() -> tuple[str, str, str, float]:
     return api_key, base_url, model, timeout
 
 
+def _reading_text(reading: dict[str, Any] | None) -> str:
+    if not isinstance(reading, dict):
+        return ""
+    p = reading.get("paraphrase")
+    return p.strip() if isinstance(p, str) else ""
+
+
+def _normalize_reading_text(s: str | None) -> str:
+    t = unicodedata.normalize("NFKC", str(s or "")).strip().lower()
+    t = " ".join(t.split())
+    return t
+
+
+def _reading_similarity(a: str | None, b: str | None) -> float:
+    na = _normalize_reading_text(a)
+    nb = _normalize_reading_text(b)
+    if not na and not nb:
+        return 1.0
+    if not na or not nb:
+        return 0.0
+    return 1.0 if na == nb else 0.0
+
+
+def align_phase2_sides(
+    *,
+    pred_reading_a_text: str,
+    pred_reading_b_text: str,
+    pred_a: dict[str, Any],
+    pred_b: dict[str, Any],
+    gold_a_obj: dict[str, Any],
+    gold_b_obj: dict[str, Any],
+) -> dict[str, Any]:
+    gold_a_text = _reading_text(gold_a_obj)
+    gold_b_text = _reading_text(gold_b_obj)
+
+    score_keep = _reading_similarity(pred_reading_a_text, gold_a_text) + _reading_similarity(pred_reading_b_text, gold_b_text)
+    score_swap = _reading_similarity(pred_reading_a_text, gold_b_text) + _reading_similarity(pred_reading_b_text, gold_a_text)
+
+    if score_keep >= score_swap:
+        return {
+            "assignment": "predA→goldA, predB→goldB",
+            "assignment_score": score_keep,
+            "reading_a_input": pred_reading_a_text,
+            "reading_b_input": pred_reading_b_text,
+            "gold_pack_a": _gold_pack(gold_a_obj),
+            "gold_pack_b": _gold_pack(gold_b_obj),
+            "pred_a": pred_a,
+            "pred_b": pred_b,
+        }
+
+    return {
+        "assignment": "predA→goldB, predB→goldA",
+        "assignment_score": score_swap,
+        "reading_a_input": pred_reading_a_text,
+        "reading_b_input": pred_reading_b_text,
+        "gold_pack_a": _gold_pack(gold_b_obj),
+        "gold_pack_b": _gold_pack(gold_a_obj),
+        "pred_a": pred_a,
+        "pred_b": pred_b,
+    }
+
+
 def build_detail_record(
     *,
     sid: int,
@@ -240,15 +302,19 @@ def build_detail_record(
     item_score: float | None,
     success: bool,
     error: str | None,
+    assignment: str | None,
+    assignment_score: float | None,
 ) -> dict[str, Any]:
     return {
-        "source_chambi_id": sid,
+        "source_ethi_ambrot_id": sid,
         "input_text": input_text,
         "model_name": model_name,
         "judge_model": judge_model,
         "prediction_file": prediction_file,
         "reading_a_input": ra_in,
         "reading_b_input": rb_in,
+        "assignment": assignment,
+        "assignment_score": assignment_score,
         "gold": {
             "reading_a": {
                 "paraphrase": gold_pack_a.get("paraphrase", ""),
@@ -284,16 +350,23 @@ def summarize_from_details(
     num_phase2_items: int,
     phase2_eligible_sids: set[int],
 ) -> dict[str, Any]:
-    judged = [r for r in detail_rows if r.get("success") is True and isinstance(r.get("judge_eval"), dict)]
+    predictions_path_str = str(predictions_path.resolve())
+    scoped_rows = [
+        r for r in detail_rows
+        if str(r.get("prediction_file") or "") == predictions_path_str
+        and str(r.get("judge_model") or "") == judge_model
+    ]
+
+    judged = [r for r in scoped_rows if r.get("success") is True and isinstance(r.get("judge_eval"), dict)]
     je_list = []
     for r in judged:
         try:
-            sid = _coerce_sid(r["source_chambi_id"])
+            sid = _coerce_sid(r["source_ethi_ambrot_id"])
         except (TypeError, ValueError, KeyError):
             continue
         if sid in phase2_eligible_sids:
             je_list.append(r)
-    num_judged_items = len(judged)
+    num_judged_items = len(je_list)
 
     parse_success_rate = (
         num_phase2_items / max(num_matched_items, 1) if num_matched_items else 0.0
@@ -357,10 +430,29 @@ def summarize_from_details(
     )
     avg_item_score = avg(item_scores)
 
-    # supplementary: primary & value set (only judge-success rows)
+    # supplementary: judge boolean submetrics + primary/value-set automatic checks
+    norm_match_a = norm_match_b = 0
+    obligation_match_a = obligation_match_b = 0
+    advice_match_a = advice_match_b = 0
+    value_match_a = value_match_b = 0
     p_corr_a = p_corr_b = 0
     v_hit_a = v_hit_b = 0
     for r in je_list:
+        je = r.get("judge_eval")
+        if isinstance(je, dict):
+            ja = je.get("reading_a")
+            jb = je.get("reading_b")
+            if isinstance(ja, dict):
+                norm_match_a += 1 if ja.get("norm_match") is True else 0
+                obligation_match_a += 1 if ja.get("obligation_match") is True else 0
+                advice_match_a += 1 if ja.get("advice_match") is True else 0
+                value_match_a += 1 if ja.get("value_match") is True else 0
+            if isinstance(jb, dict):
+                norm_match_b += 1 if jb.get("norm_match") is True else 0
+                obligation_match_b += 1 if jb.get("obligation_match") is True else 0
+                advice_match_b += 1 if jb.get("advice_match") is True else 0
+                value_match_b += 1 if jb.get("value_match") is True else 0
+
         gold = r.get("gold")
         pred = r.get("prediction")
         if not isinstance(gold, dict) or not isinstance(pred, dict):
@@ -385,6 +477,18 @@ def summarize_from_details(
                 v_hit_b += 1
 
     n_sup = len(je_list)
+    norm_match_accuracy_a = norm_match_a / max(n_sup, 1)
+    norm_match_accuracy_b = norm_match_b / max(n_sup, 1)
+    norm_match_accuracy_overall = (norm_match_a + norm_match_b) / max(2 * n_sup, 1)
+    obligation_match_accuracy_a = obligation_match_a / max(n_sup, 1)
+    obligation_match_accuracy_b = obligation_match_b / max(n_sup, 1)
+    obligation_match_accuracy_overall = (obligation_match_a + obligation_match_b) / max(2 * n_sup, 1)
+    advice_match_accuracy_a = advice_match_a / max(n_sup, 1)
+    advice_match_accuracy_b = advice_match_b / max(n_sup, 1)
+    advice_match_accuracy_overall = (advice_match_a + advice_match_b) / max(2 * n_sup, 1)
+    value_match_accuracy_a = value_match_a / max(n_sup, 1)
+    value_match_accuracy_b = value_match_b / max(n_sup, 1)
+    value_match_accuracy_overall = (value_match_a + value_match_b) / max(2 * n_sup, 1)
     primary_dimension_accuracy_a = p_corr_a / max(n_sup, 1)
     primary_dimension_accuracy_b = p_corr_b / max(n_sup, 1)
     primary_dimension_accuracy_overall = (p_corr_a + p_corr_b) / max(2 * n_sup, 1)
@@ -424,7 +528,19 @@ def summarize_from_details(
             "score_rot_distribution_overall": dist_overall,
         },
         "metrics_supplementary": {
-            "description": "非主分数：规范化后的 primary 匹配与 gold primary 是否落在 pred 维集合。",
+            "description": "非主分数：judge 布尔子项一致率 + 规范化后的 primary 匹配与 gold primary 是否落在 pred 维集合。",
+            "norm_match_accuracy_a": norm_match_accuracy_a,
+            "norm_match_accuracy_b": norm_match_accuracy_b,
+            "norm_match_accuracy_overall": norm_match_accuracy_overall,
+            "obligation_match_accuracy_a": obligation_match_accuracy_a,
+            "obligation_match_accuracy_b": obligation_match_accuracy_b,
+            "obligation_match_accuracy_overall": obligation_match_accuracy_overall,
+            "advice_match_accuracy_a": advice_match_accuracy_a,
+            "advice_match_accuracy_b": advice_match_accuracy_b,
+            "advice_match_accuracy_overall": advice_match_accuracy_overall,
+            "value_match_accuracy_a": value_match_accuracy_a,
+            "value_match_accuracy_b": value_match_accuracy_b,
+            "value_match_accuracy_overall": value_match_accuracy_overall,
             "primary_dimension_accuracy_a": primary_dimension_accuracy_a,
             "primary_dimension_accuracy_b": primary_dimension_accuracy_b,
             "primary_dimension_accuracy_overall": primary_dimension_accuracy_overall,
@@ -436,7 +552,7 @@ def summarize_from_details(
 
 
 def reload_all_details(path: Path) -> list[dict[str, Any]]:
-    """按文件顺序读入，同一 source_chambi_id 只保留最后一次（与续跑追加一致）。"""
+    """按文件顺序读入，同一 source_ethi_ambrot_id 只保留最后一次（与续跑追加一致）。"""
     by_sid: dict[int, dict[str, Any]] = {}
     if not path.is_file():
         return []
@@ -449,10 +565,10 @@ def reload_all_details(path: Path) -> list[dict[str, Any]]:
                 o = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if not isinstance(o, dict) or o.get("source_chambi_id") is None:
+            if not isinstance(o, dict) or o.get("source_ethi_ambrot_id") is None:
                 continue
             try:
-                k = _coerce_sid(o["source_chambi_id"])
+                k = _coerce_sid(o["source_ethi_ambrot_id"])
             except (TypeError, ValueError):
                 continue
             by_sid[k] = o
@@ -553,6 +669,8 @@ def main() -> int:
                 item_score=None,
                 success=False,
                 error="missing_gold_readings_AB",
+                assignment=None,
+                assignment_score=None,
             )
             append_jsonl(detail_out, rec)
             continue
@@ -568,19 +686,28 @@ def main() -> int:
         pred_a = _pred_side_copy(pa_raw)
         pred_b = _pred_side_copy(pb_raw)
 
-        pack_a = _gold_pack(ra_obj)
-        pack_b = _gold_pack(rb_obj)
         ra_in = str(pr.get("reading_a") or "")
         rb_in = str(pr.get("reading_b") or "")
 
-        user_msg = build_judge_user_message_both_readings(
-            input_text=input_text,
-            reading_a_text=ra_in,
-            reading_b_text=rb_in,
-            gold_a=pack_a,
-            gold_b=pack_b,
+        aligned = align_phase2_sides(
+            pred_reading_a_text=ra_in,
+            pred_reading_b_text=rb_in,
             pred_a=pred_a,
             pred_b=pred_b,
+            gold_a_obj=ra_obj,
+            gold_b_obj=rb_obj,
+        )
+        pack_a = aligned["gold_pack_a"]
+        pack_b = aligned["gold_pack_b"]
+
+        user_msg = build_judge_user_message_both_readings(
+            input_text=input_text,
+            reading_a_text=aligned["reading_a_input"],
+            reading_b_text=aligned["reading_b_input"],
+            gold_a=pack_a,
+            gold_b=pack_b,
+            pred_a=aligned["pred_a"],
+            pred_b=aligned["pred_b"],
         )
 
         raw_judge = ""
@@ -617,21 +744,23 @@ def main() -> int:
             model_name=str(pr.get("model_name") or ""),
             judge_model=judge_model,
             prediction_file=prediction_file_str,
-            ra_in=ra_in,
-            rb_in=rb_in,
+            ra_in=aligned["reading_a_input"],
+            rb_in=aligned["reading_b_input"],
             gold_pack_a=pack_a,
             gold_pack_b=pack_b,
-            pred_a=pred_a,
-            pred_b=pred_b,
+            pred_a=aligned["pred_a"],
+            pred_b=aligned["pred_b"],
             judge_eval=judge_eval,
             item_score=item_score,
             success=ok,
             error=err,
+            assignment=aligned["assignment"],
+            assignment_score=float(aligned["assignment_score"]),
         )
         append_jsonl(detail_out, rec)
         new_calls += 1
         status = "ok" if ok else (err or "fail")
-        print(f"[{new_calls}] source_chambi_id={sid} judge={status}", flush=True)
+        print(f"[{new_calls}] source_ethi_ambrot_id={sid} judge={status}", flush=True)
         time.sleep(max(0.0, args.sleep))
 
     # Summary from full detail file
